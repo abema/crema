@@ -10,12 +10,12 @@ import (
 	"google.golang.org/protobuf/types/known/structpb"
 )
 
-func TestProtoCacheCodec_EncodeDecodeRoundTrip(t *testing.T) {
+func TestProtobufCodec_EncodeDecodeRoundTrip(t *testing.T) {
 	t.Parallel()
 
-	codec, err := NewProtoCacheCodec(&testproto.ProtoTestObject{})
+	codec, err := NewProtobufCodec(&testproto.ProtoTestObject{})
 	if err != nil {
-		t.Fatalf("NewProtoCacheCodec() error = %v", err)
+		t.Fatalf("NewProtobufCodec() error = %v", err)
 	}
 	value := &testproto.ProtoTestObject{}
 	value.SetValue(123)
@@ -43,31 +43,31 @@ func TestProtoCacheCodec_EncodeDecodeRoundTrip(t *testing.T) {
 	}
 }
 
-func TestNewProtoCacheCodec_RejectsNilPrototype(t *testing.T) {
+func TestNewProtobufCodec_RejectsNilPrototype(t *testing.T) {
 	t.Parallel()
 
-	_, err := NewProtoCacheCodec[*testproto.ProtoTestObject](nil)
+	_, err := NewProtobufCodec[*testproto.ProtoTestObject](nil)
 	if err == nil {
-		t.Fatal("NewProtoCacheCodec() error = nil, want error")
+		t.Fatal("NewProtobufCodec() error = nil, want error")
 	}
 }
 
-func TestNewProtoCacheCodec_RejectsTypedNilPrototype(t *testing.T) {
+func TestNewProtobufCodec_RejectsTypedNilPrototype(t *testing.T) {
 	t.Parallel()
 
 	var prototype *testproto.ProtoTestObject
-	_, err := NewProtoCacheCodec(prototype)
+	_, err := NewProtobufCodec(prototype)
 	if err == nil {
-		t.Fatal("NewProtoCacheCodec() error = nil, want error")
+		t.Fatal("NewProtobufCodec() error = nil, want error")
 	}
 }
 
-func TestProtoCacheCodec_DecodeUsesPrototypeWhenValueNil(t *testing.T) {
+func TestProtobufCodec_DecodeUsesPrototypeWhenValueNil(t *testing.T) {
 	t.Parallel()
 
-	codec, err := NewProtoCacheCodec(&testproto.ProtoTestObject{})
+	codec, err := NewProtobufCodec(&testproto.ProtoTestObject{})
 	if err != nil {
-		t.Fatalf("NewProtoCacheCodec() error = %v", err)
+		t.Fatalf("NewProtobufCodec() error = %v", err)
 	}
 
 	in := crema.CacheObject[*testproto.ProtoTestObject]{
@@ -94,12 +94,12 @@ func TestProtoCacheCodec_DecodeUsesPrototypeWhenValueNil(t *testing.T) {
 	}
 }
 
-func TestProtoCacheCodec_DecodeReturnsValue(t *testing.T) {
+func TestProtobufCodec_DecodeReturnsValue(t *testing.T) {
 	t.Parallel()
 
-	codec, err := NewProtoCacheCodec(&testproto.ProtoTestObject{})
+	codec, err := NewProtobufCodec(&testproto.ProtoTestObject{})
 	if err != nil {
-		t.Fatalf("NewProtoCacheCodec() error = %v", err)
+		t.Fatalf("NewProtobufCodec() error = %v", err)
 	}
 
 	in := crema.CacheObject[*testproto.ProtoTestObject]{
@@ -125,12 +125,12 @@ func TestProtoCacheCodec_DecodeReturnsValue(t *testing.T) {
 	}
 }
 
-func TestProtoCacheCodec_DecodeRejectsInvalidData(t *testing.T) {
+func TestProtobufCodec_DecodeRejectsInvalidData(t *testing.T) {
 	t.Parallel()
 
-	codec, err := NewProtoCacheCodec(&testproto.ProtoTestObject{})
+	codec, err := NewProtobufCodec(&testproto.ProtoTestObject{})
 	if err != nil {
-		t.Fatalf("NewProtoCacheCodec() error = %v", err)
+		t.Fatalf("NewProtobufCodec() error = %v", err)
 	}
 
 	if _, err := codec.Decode([]byte("not-a-proto")); err == nil {
@@ -138,12 +138,12 @@ func TestProtoCacheCodec_DecodeRejectsInvalidData(t *testing.T) {
 	}
 }
 
-func TestProtoCacheCodec_DecodeRejectsInvalidSerializedValue(t *testing.T) {
+func TestProtobufCodec_DecodeRejectsInvalidSerializedValue(t *testing.T) {
 	t.Parallel()
 
-	codec, err := NewProtoCacheCodec(&testproto.ProtoTestObject{})
+	codec, err := NewProtobufCodec(&testproto.ProtoTestObject{})
 	if err != nil {
-		t.Fatalf("NewProtoCacheCodec() error = %v", err)
+		t.Fatalf("NewProtobufCodec() error = %v", err)
 	}
 
 	envelope := &testproto.ProtoCacheObject{}
@@ -158,12 +158,12 @@ func TestProtoCacheCodec_DecodeRejectsInvalidSerializedValue(t *testing.T) {
 	}
 }
 
-func TestProtoCacheCodec_EncodeRejectsInvalidUTF8(t *testing.T) {
+func TestProtobufCodec_EncodeRejectsInvalidUTF8(t *testing.T) {
 	t.Parallel()
 
-	codec, err := NewProtoCacheCodec(&structpb.Struct{})
+	codec, err := NewProtobufCodec(&structpb.Struct{})
 	if err != nil {
-		t.Fatalf("NewProtoCacheCodec() error = %v", err)
+		t.Fatalf("NewProtobufCodec() error = %v", err)
 	}
 
 	in := crema.CacheObject[*structpb.Struct]{

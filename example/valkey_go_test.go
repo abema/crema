@@ -23,7 +23,7 @@ func ExampleValkeyCacheProvider() {
 	defer client.Close()
 
 	provider := cremavalkey.NewValkeyCacheProvider(client)
-	cache := crema.NewCache(provider, crema.JSONByteStringSerializationCodec[GreetingMessage]{})
+	cache := crema.NewCache(provider, crema.JSONByteStringCodec[GreetingMessage]{})
 
 	value, err := cache.GetOrLoad(context.Background(), "greeting", time.Minute, func(ctx context.Context) (GreetingMessage, error) {
 		return GreetingMessage{Message: "hello"}, nil

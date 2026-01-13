@@ -17,28 +17,28 @@ var ErrCacheObjectEnvelopeVersionMismatch = errors.New("protobuf cache object ve
 // ErrNilPrototype is returned when a nil prototype is provided.
 var ErrNilPrototype = errors.New("protobuf codec requires Prototype to construct messages")
 
-// ProtoCacheCodec encodes/decodes crema.CacheObject values using protobuf.
-type ProtoCacheCodec[V proto.Message] struct {
+// ProtobufCodec encodes/decodes crema.CacheObject values using protobuf.
+type ProtobufCodec[V proto.Message] struct {
 	Prototype V
 }
 
-var _ crema.SerializationCodec[proto.Message, []byte] = ProtoCacheCodec[proto.Message]{}
+var _ crema.SerializationCodec[proto.Message, []byte] = ProtobufCodec[proto.Message]{}
 
 var marshalOptions = proto.MarshalOptions{}
 var unmarshalOptions = proto.UnmarshalOptions{}
 
-// NewProtoCacheCodec creates a codec with a non-nil prototype message.
+// NewProtobufCodec creates a codec with a non-nil prototype message.
 // Pass a zero-value instance of the concrete protobuf message you will cache,
 // e.g. &mypb.MyMessage{}; it is used only for allocating new messages on decode.
-func NewProtoCacheCodec[V proto.Message](prototype V) (ProtoCacheCodec[V], error) {
+func NewProtobufCodec[V proto.Message](prototype V) (ProtobufCodec[V], error) {
 	if isNilPrototype(prototype) {
-		return ProtoCacheCodec[V]{}, ErrNilPrototype
+		return ProtobufCodec[V]{}, ErrNilPrototype
 	}
-	return ProtoCacheCodec[V]{Prototype: prototype}, nil
+	return ProtobufCodec[V]{Prototype: prototype}, nil
 }
 
 // Encode marshals a cache object into the protobuf envelope format.
-func (p ProtoCacheCodec[V]) Encode(value crema.CacheObject[V]) ([]byte, error) {
+func (p ProtobufCodec[V]) Encode(value crema.CacheObject[V]) ([]byte, error) {
 	serializedValue, err := proto.Marshal(value.Value)
 	if err != nil {
 		return nil, err
@@ -55,7 +55,7 @@ func (p ProtoCacheCodec[V]) Encode(value crema.CacheObject[V]) ([]byte, error) {
 }
 
 // Decode unmarshals the protobuf envelope into a cache object.
-func (p ProtoCacheCodec[V]) Decode(data []byte) (crema.CacheObject[V], error) {
+func (p ProtobufCodec[V]) Decode(data []byte) (crema.CacheObject[V], error) {
 	var envelope internalproto.ProtoCacheObject
 	if err := unmarshalOptions.Unmarshal(data, &envelope); err != nil {
 		return crema.CacheObject[V]{}, err

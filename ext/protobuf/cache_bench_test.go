@@ -7,10 +7,10 @@ import (
 	testproto "github.com/abema/crema/ext/protobuf/internal/proto"
 )
 
-func BenchmarkProtoCacheCodecEncode(b *testing.B) {
-	codec, err := NewProtoCacheCodec(&testproto.ProtoTestObject{})
+func BenchmarkProtobufCodecEncode(b *testing.B) {
+	codec, err := NewProtobufCodec(&testproto.ProtoTestObject{})
 	if err != nil {
-		b.Fatalf("NewProtoCacheCodec() error = %v", err)
+		b.Fatalf("NewProtobufCodec() error = %v", err)
 	}
 	value := &testproto.ProtoTestObject{}
 	value.SetValue(123)
@@ -28,10 +28,10 @@ func BenchmarkProtoCacheCodecEncode(b *testing.B) {
 	}
 }
 
-func BenchmarkProtoCacheCodecDecode(b *testing.B) {
-	codec, err := NewProtoCacheCodec(&testproto.ProtoTestObject{})
+func BenchmarkProtobufCodecDecode(b *testing.B) {
+	codec, err := NewProtobufCodec(&testproto.ProtoTestObject{})
 	if err != nil {
-		b.Fatalf("NewProtoCacheCodec() error = %v", err)
+		b.Fatalf("NewProtobufCodec() error = %v", err)
 	}
 	value := &testproto.ProtoTestObject{}
 	value.SetValue(123)

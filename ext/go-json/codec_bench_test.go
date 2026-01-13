@@ -14,9 +14,9 @@ type benchPayload struct {
 	Meta    map[string]string
 }
 
-func BenchmarkJSONByteStringSerializationCodecEncode(b *testing.B) {
-	std := crema.JSONByteStringSerializationCodec[benchPayload]{}
-	fast := JSONByteStringSerializationCodec[benchPayload]{}
+func BenchmarkJSONByteStringCodecEncode(b *testing.B) {
+	std := crema.JSONByteStringCodec[benchPayload]{}
+	fast := JSONByteStringCodec[benchPayload]{}
 	input := &crema.CacheObject[benchPayload]{
 		Value: benchPayload{
 			ID:      "bench",
@@ -48,9 +48,9 @@ func BenchmarkJSONByteStringSerializationCodecEncode(b *testing.B) {
 	})
 }
 
-func BenchmarkJSONByteStringSerializationCodecDecode(b *testing.B) {
-	std := crema.JSONByteStringSerializationCodec[benchPayload]{}
-	fast := JSONByteStringSerializationCodec[benchPayload]{}
+func BenchmarkJSONByteStringCodecDecode(b *testing.B) {
+	std := crema.JSONByteStringCodec[benchPayload]{}
+	fast := JSONByteStringCodec[benchPayload]{}
 	input := &crema.CacheObject[benchPayload]{
 		Value: benchPayload{
 			ID:      "bench",

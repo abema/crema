@@ -76,9 +76,9 @@ println(value)
 | Name | Package | Notes | Example |
 | --- | --- | --- | --- |
 | NoopSerializationCodec | `github.com/abema/crema` | Pass-through codec for in-memory cache objects. | - |
-| JSONByteStringSerializationCodec | `github.com/abema/crema` | Standard library JSON encoding to `[]byte`. | [✅](example/valkey_go_test.go) |
-| JSONByteStringSerializationCodec | `github.com/abema/crema/ext/go-json` | goccy/go-json encoding to `[]byte`. | - |
-| ProtoCacheCodec | `github.com/abema/crema/ext/protobuf` | Protobuf encoding to `[]byte`. | [✅](example/protobuf_test.go) |
+| JSONByteStringCodec | `github.com/abema/crema` | Standard library JSON encoding to `[]byte`. | [✅](example/valkey_go_test.go) |
+| JSONByteStringCodec | `github.com/abema/crema/ext/go-json` | goccy/go-json encoding to `[]byte`. | - |
+| ProtobufCodec | `github.com/abema/crema/ext/protobuf` | Protobuf encoding to `[]byte`. | [✅](example/protobuf_test.go) |
 
 ### MetricsProvider
 

@@ -4,13 +4,13 @@ Protobuf serialization codec for `crema`.
 
 ## Features
 
-- `ProtoCacheCodec` for encoding/decoding cache objects via protobuf
+- `ProtobufCodec` for encoding/decoding cache objects via protobuf
 - `ProtoCacheObject` envelope message
 
 ## Usage
 
 ```go
-codec, err := NewProtoCacheCodec(&mypb.MyMessage{})
+codec, err := NewProtobufCodec(&mypb.MyMessage{})
 if err != nil {
     // handle error
 }

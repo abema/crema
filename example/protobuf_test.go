@@ -37,10 +37,10 @@ func (b *byteProvider) Delete(_ context.Context, key string) error {
 	return nil
 }
 
-func ExampleProtoCacheCodec() {
+func ExampleProtobufCodec() {
 	provider := &byteProvider{items: make(map[string][]byte)}
 	// Provide a zero-value instance of the message type to decode into.
-	codec, err := cremaprotobuf.NewProtoCacheCodec(&wrapperspb.StringValue{})
+	codec, err := cremaprotobuf.NewProtobufCodec(&wrapperspb.StringValue{})
 	if err != nil {
 		fmt.Println(err)
 		return

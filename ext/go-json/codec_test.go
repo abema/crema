@@ -7,10 +7,10 @@ import (
 	"github.com/abema/crema"
 )
 
-func TestJSONByteStringSerializationCodec_RoundTrip(t *testing.T) {
+func TestJSONByteStringCodec_RoundTrip(t *testing.T) {
 	t.Parallel()
 
-	codec := JSONByteStringSerializationCodec[int]{}
+	codec := JSONByteStringCodec[int]{}
 	input := &crema.CacheObject[int]{
 		Value:          10,
 		ExpireAtMillis: 1234,
@@ -32,19 +32,19 @@ func TestJSONByteStringSerializationCodec_RoundTrip(t *testing.T) {
 	}
 }
 
-func TestJSONByteStringSerializationCodec_DecodeError(t *testing.T) {
+func TestJSONByteStringCodec_DecodeError(t *testing.T) {
 	t.Parallel()
 
-	codec := JSONByteStringSerializationCodec[int]{}
+	codec := JSONByteStringCodec[int]{}
 	if _, err := codec.Decode([]byte("{")); err == nil {
 		t.Fatal("expected decode error, got nil")
 	}
 }
 
-func TestJSONByteStringSerializationCodec_EncodeError(t *testing.T) {
+func TestJSONByteStringCodec_EncodeError(t *testing.T) {
 	t.Parallel()
 
-	codec := JSONByteStringSerializationCodec[func()]{}
+	codec := JSONByteStringCodec[func()]{}
 	input := &crema.CacheObject[func()]{
 		Value:          func() {},
 		ExpireAtMillis: 1234,

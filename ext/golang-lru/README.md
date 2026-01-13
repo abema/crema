@@ -6,5 +6,5 @@ Cache provider for `crema` using `hashicorp/golang-lru`.
 
 ```go
 provider := golanglru.NewCacheProvider[[]byte](1024, 5*time.Minute)
-cache := crema.NewCache(provider, crema.JSONByteStringSerializationCodec[any]{})
+cache := crema.NewCache(provider, crema.JSONByteStringCodec[any]{})
 ```

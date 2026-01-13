@@ -7,13 +7,13 @@ import (
 	"github.com/abema/crema"
 )
 
-// JSONByteStringSerializationCodec marshals cache objects as JSON bytes via goccy/go-json.
-type JSONByteStringSerializationCodec[V any] struct{}
+// JSONByteStringCodec marshals cache objects as JSON bytes via goccy/go-json.
+type JSONByteStringCodec[V any] struct{}
 
-var _ crema.SerializationCodec[any, []byte] = JSONByteStringSerializationCodec[any]{}
+var _ crema.SerializationCodec[any, []byte] = JSONByteStringCodec[any]{}
 
 // Encode marshals the cache object into JSON bytes without a trailing newline.
-func (j JSONByteStringSerializationCodec[V]) Encode(value crema.CacheObject[V]) ([]byte, error) {
+func (j JSONByteStringCodec[V]) Encode(value crema.CacheObject[V]) ([]byte, error) {
 	buf := bytes.NewBuffer(nil)
 	enc := json.NewEncoder(buf)
 	enc.SetEscapeHTML(false)
@@ -28,7 +28,7 @@ func (j JSONByteStringSerializationCodec[V]) Encode(value crema.CacheObject[V]) 
 }
 
 // Decode unmarshals JSON bytes into a cache object.
-func (j JSONByteStringSerializationCodec[V]) Decode(data []byte) (crema.CacheObject[V], error) {
+func (j JSONByteStringCodec[V]) Decode(data []byte) (crema.CacheObject[V], error) {
 	var out crema.CacheObject[V]
 	if err := json.Unmarshal(data, &out); err != nil {
 		return crema.CacheObject[V]{}, err

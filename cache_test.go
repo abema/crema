@@ -242,7 +242,7 @@ func TestCache_GetDecodeError(t *testing.T) {
 
 	provider := &byteProvider{items: make(map[string][]byte)}
 	provider.items["key"] = []byte("{")
-	cache := NewCache(provider, JSONByteStringSerializationCodec[func()]{})
+	cache := NewCache(provider, JSONByteStringCodec[func()]{})
 
 	_, ok, err := cache.Get(context.Background(), "key")
 	if err == nil {
@@ -257,7 +257,7 @@ func TestCache_SetEncodeError(t *testing.T) {
 	t.Parallel()
 
 	provider := &byteProvider{items: make(map[string][]byte)}
-	cache := NewCache(provider, JSONByteStringSerializationCodec[func()]{})
+	cache := NewCache(provider, JSONByteStringCodec[func()]{})
 	impl := cache.(*cacheImpl[func(), []byte])
 	impl.now = func() time.Time { return time.UnixMilli(1000) }
 
