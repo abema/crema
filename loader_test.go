@@ -285,7 +285,7 @@ func TestSingleflightLoader_AcquireAfterDoneReplacesInflight(t *testing.T) {
 
 	loaderImpl := newSingleflightLoader[int](NoopMetricsProvider{})
 	ctx := context.Background()
-	inf := newInflight[int](ctx)
+	inf := loaderImpl.newInflight(ctx)
 	shard := loaderImpl.shardFor("key")
 	shard.mu.Lock()
 	shard.inflight["key"] = inf
@@ -310,6 +310,61 @@ func TestSingleflightLoader_AcquireAfterDoneReplacesInflight(t *testing.T) {
 
 	loaderImpl.releaseInflight("key", newInf, shard)
 	loaderImpl.releaseInflight("key", inf, shard)
+}
+
+func TestSingleflightLoader_PoolPutOnlyAfterDone(t *testing.T) {
+	t.Parallel()
+
+	loaderImpl := newSingleflightLoader[int](NoopMetricsProvider{})
+	ctx := context.Background()
+
+	inf := loaderImpl.newInflight(ctx)
+	shard := loaderImpl.shardFor("key")
+	shard.mu.Lock()
+	shard.inflight["key"] = inf
+	shard.mu.Unlock()
+
+	loaderImpl.releaseInflight("key", inf, shard)
+	if inf.refs != 0 {
+		t.Fatalf("expected refs=0 after release, got %d", inf.refs)
+	}
+	if inf.done {
+		t.Fatal("expected done=false before finish")
+	}
+	if inf.pooled {
+		t.Fatal("expected pooled=false before finish")
+	}
+
+	loaderImpl.finishInflight(inf, shard, 10, nil)
+	if !inf.done {
+		t.Fatal("expected done=true after finish")
+	}
+	if !inf.pooled {
+		t.Fatal("expected pooled=true after finish with refs=0")
+	}
+
+	loaderImpl.releaseInflight("key", inf, shard)
+	if !inf.pooled {
+		t.Fatal("expected pooled to remain true after extra release")
+	}
+
+	inf2 := loaderImpl.newInflight(ctx)
+	shard.mu.Lock()
+	shard.inflight["key2"] = inf2
+	shard.mu.Unlock()
+
+	loaderImpl.finishInflight(inf2, shard, 20, nil)
+	if !inf2.done {
+		t.Fatal("expected done=true after finish")
+	}
+	if inf2.pooled {
+		t.Fatal("expected pooled=false before final release")
+	}
+
+	loaderImpl.releaseInflight("key2", inf2, shard)
+	if !inf2.pooled {
+		t.Fatal("expected pooled=true after release with done=true")
+	}
 }
 
 func TestSingleflightLoader_PropagatesLoaderError(t *testing.T) {

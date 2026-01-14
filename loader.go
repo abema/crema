@@ -29,14 +29,17 @@ type inflight[V any] struct {
 	val    V
 	err    error
 	doneCh chan struct{}
+	done   bool
+	pooled bool
 }
 
 var _ internalLoader[any] = (*singleflightLoader[any])(nil)
 
 type singleflightLoader[V any] struct {
-	_       noCopy
-	shards  []singleflightShard[V]
-	metrics MetricsProvider
+	_            noCopy
+	shards       []singleflightShard[V]
+	inflightPool sync.Pool
+	metrics      MetricsProvider
 }
 
 type singleflightShard[V any] struct {
@@ -56,24 +59,31 @@ func newSingleflightLoader[V any](metrics MetricsProvider) *singleflightLoader[V
 	}
 
 	return &singleflightLoader[V]{
-		shards:  shards,
-		metrics: metrics,
-	}
-}
-
-func newInflight[V any](ctx context.Context) *inflight[V] {
-	ctx, cancel := context.WithCancel(context.WithoutCancel(ctx))
-
-	return &inflight[V]{
-		ctx:    ctx,
-		cancel: cancel,
-		refs:   1,
-		doneCh: make(chan struct{}),
+		shards:       shards,
+		metrics:      metrics,
+		inflightPool: sync.Pool{New: func() any { return &inflight[V]{} }},
 	}
 }
 
 func hashKey(key string) uint64 {
 	return maphash.String(mapHashSeed, key)
+}
+
+func (l *singleflightLoader[V]) newInflight(ctx context.Context) *inflight[V] {
+	ctx, cancel := context.WithCancel(context.WithoutCancel(ctx))
+
+	var val V
+	inf := l.inflightPool.Get().(*inflight[V])
+	inf.ctx = ctx
+	inf.cancel = cancel
+	inf.refs = 1
+	inf.val = val
+	inf.err = nil
+	inf.doneCh = make(chan struct{})
+	inf.done = false
+	inf.pooled = false
+
+	return inf
 }
 
 func (l *singleflightLoader[V]) acquireInflight(ctx context.Context, key string) (*inflight[V], bool, *singleflightShard[V]) {
@@ -84,7 +94,7 @@ func (l *singleflightLoader[V]) acquireInflight(ctx context.Context, key string)
 	if inf, ok := shard.inflight[key]; ok {
 		select {
 		case <-inf.doneCh:
-			newInf := newInflight[V](ctx)
+			newInf := l.newInflight(ctx)
 			shard.inflight[key] = newInf
 
 			return newInf, true, shard
@@ -94,7 +104,7 @@ func (l *singleflightLoader[V]) acquireInflight(ctx context.Context, key string)
 
 		return inf, false, shard
 	} else {
-		newInf := newInflight[V](ctx)
+		newInf := l.newInflight(ctx)
 		shard.inflight[key] = newInf
 
 		return newInf, true, shard
@@ -110,7 +120,12 @@ func (l *singleflightLoader[V]) finishInflight(inf *inflight[V], shard *singlefl
 	ctx = inf.ctx
 	inf.val = v
 	inf.err = err
+	inf.done = true
 	close(inf.doneCh)
+	if inf.refs <= 0 && !inf.pooled {
+		inf.pooled = true
+		l.inflightPool.Put(inf)
+	}
 	shard.mu.Unlock()
 
 	l.metrics.RecordLoadConcurrency(ctx, refs)
@@ -124,6 +139,10 @@ func (l *singleflightLoader[V]) releaseInflight(key string, inf *inflight[V], sh
 			delete(shard.inflight, key)
 		}
 		inf.cancel()
+		if inf.done && !inf.pooled {
+			inf.pooled = true
+			l.inflightPool.Put(inf)
+		}
 	}
 	shard.mu.Unlock()
 }
