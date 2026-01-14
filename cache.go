@@ -84,6 +84,7 @@ func WithDirectLoader[V any, S any]() CacheOption[V, S] {
 // WithRevalidationWindow sets the target revalidation window duration.
 func WithRevalidationWindow[V any, S any](duration time.Duration) CacheOption[V, S] {
 	steepness, revalidationWindowMilliseconds := calculateSteepnessAndRevalidationWindow(duration.Milliseconds())
+
 	return func(c *cacheImpl[V, S]) {
 		c.steepness = steepness
 		c.revalidationWindowMilliseconds = revalidationWindowMilliseconds
@@ -111,6 +112,7 @@ func NewCache[V any, S any](provider CacheProvider[S], codec SerializationCodec[
 		}
 		opt(cache)
 	}
+
 	return cache
 }
 
@@ -147,6 +149,7 @@ func (c *cacheImpl[V, S]) Set(ctx context.Context, key string, value CacheObject
 	if ttl <= 0 {
 		return nil
 	}
+
 	return c.provider.Set(ctx, key, encoded, ttl)
 }
 
@@ -171,6 +174,7 @@ func (c *cacheImpl[V, S]) GetOrLoad(ctx context.Context, key string, ttl time.Du
 	v, leader, err := c.internalLoader.load(ctx, key, loader)
 	if err != nil {
 		var zero V
+
 		return zero, err
 	}
 	if leader {
@@ -182,6 +186,7 @@ func (c *cacheImpl[V, S]) GetOrLoad(ctx context.Context, key string, ttl time.Du
 			c.logger.Warn("failed to set cache", slog.String("key", key), slog.String("error", err.Error()))
 		}
 	}
+
 	return v, nil
 }
 
@@ -199,6 +204,7 @@ func (c *cacheImpl[V, S]) shouldRevalidate(nowMillis int64, expireAtMillis int64
 	}
 
 	p := 1.0 - math.Exp(-c.steepness*float64(remainMillis))
+
 	return c.random() < p
 }
 

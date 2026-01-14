@@ -24,8 +24,10 @@ type ProtobufCodec[V proto.Message] struct {
 
 var _ crema.SerializationCodec[proto.Message, []byte] = ProtobufCodec[proto.Message]{}
 
-var marshalOptions = proto.MarshalOptions{}
-var unmarshalOptions = proto.UnmarshalOptions{}
+var (
+	marshalOptions   = proto.MarshalOptions{}
+	unmarshalOptions = proto.UnmarshalOptions{}
+)
 
 // NewProtobufCodec creates a codec with a non-nil prototype message.
 // Pass a zero-value instance of the concrete protobuf message you will cache,
@@ -34,6 +36,7 @@ func NewProtobufCodec[V proto.Message](prototype V) (ProtobufCodec[V], error) {
 	if isNilPrototype(prototype) {
 		return ProtobufCodec[V]{}, ErrNilPrototype
 	}
+
 	return ProtobufCodec[V]{Prototype: prototype}, nil
 }
 
@@ -51,6 +54,7 @@ func (p ProtobufCodec[V]) Encode(value crema.CacheObject[V]) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+
 	return encoded, nil
 }
 
@@ -65,6 +69,7 @@ func (p ProtobufCodec[V]) Decode(data []byte) (crema.CacheObject[V], error) {
 	if err := unmarshalOptions.Unmarshal(envelope.GetSerializedValue(), msg); err != nil {
 		return crema.CacheObject[V]{}, err
 	}
+
 	return crema.CacheObject[V]{
 		Value:          msg,
 		ExpireAtMillis: envelope.GetExpireAtMillis(),

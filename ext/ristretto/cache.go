@@ -5,8 +5,8 @@ import (
 	"errors"
 	"time"
 
-	dgraphristretto "github.com/dgraph-io/ristretto"
 	"github.com/abema/crema"
+	dgraphristretto "github.com/dgraph-io/ristretto"
 )
 
 // CostFunc returns the cost associated with a cache entry.
@@ -21,10 +21,8 @@ type RistrettoCacheProvider[S any] struct {
 	costFunc CostFunc[S]
 }
 
-var (
-	// ErrUnexpectedCacheValueType indicates a non-matching value type stored in ristretto.
-	ErrUnexpectedCacheValueType = errors.New("ristretto cache returned unexpected value type")
-)
+// ErrUnexpectedCacheValueType indicates a non-matching value type stored in ristretto.
+var ErrUnexpectedCacheValueType = errors.New("ristretto cache returned unexpected value type")
 
 const defaultCost = int64(1)
 
@@ -47,6 +45,7 @@ func NewRistrettoCacheProvider[S any](cache *dgraphristretto.Cache, opts ...Cach
 		}
 		opt(provider)
 	}
+
 	return provider, nil
 }
 
@@ -64,13 +63,16 @@ func (r *RistrettoCacheProvider[S]) Get(_ context.Context, key string) (S, bool,
 	value, ok := r.cache.Get(key)
 	if !ok {
 		var zero S
+
 		return zero, false, nil
 	}
 	castValue, ok := value.(S)
 	if !ok {
 		var zero S
+
 		return zero, false, ErrUnexpectedCacheValueType
 	}
+
 	return castValue, true, nil
 }
 
@@ -84,11 +86,13 @@ func (r *RistrettoCacheProvider[S]) Set(_ context.Context, key string, value S, 
 		// rejected by TinyLFU algorithm, but not an error
 		return nil
 	}
+
 	return nil
 }
 
 // Delete removes a value from the cache by key.
 func (r *RistrettoCacheProvider[S]) Delete(_ context.Context, key string) error {
 	r.cache.Del(key)
+
 	return nil
 }

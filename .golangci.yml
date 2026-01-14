@@ -1,1 +1,37 @@
 version: "2"
+linters:
+  default: fast
+  disable:
+    - wsl
+    - testpackage
+    - depguard
+    - gomoddirectives # temporally until first release
+  exclusions:
+    rules:
+      - path: '(.+)_test\.go'
+        linters:
+          - funlen
+          - goconst
+          - nestif
+          - cyclop
+          - gocognit
+      - path: 'loader.go'
+        linters:
+          - unused
+    paths:
+      - 'cmd/plot-revalidation/.*\.go'
+      - 'generate.go'
+      - 'ext/protobuf/generate.go'
+      - 'ext/protobuf/internal/proto/.*'
+  settings:
+    lll:
+      line-length: 140
+    gosec:
+      severity: medium
+    misspell:
+      locale: US
+
+formatters:
+  enable:
+    - gofumpt
+    - goimports

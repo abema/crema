@@ -25,6 +25,7 @@ func NewValkeyCacheProvider(client valkey.Client) *ValkeyCacheProvider {
 func (p *ValkeyCacheProvider) Get(ctx context.Context, key string) ([]byte, bool, error) {
 	result := p.client.Do(ctx, p.client.B().Get().Key(key).Build())
 	msg, err := result.ToMessage()
+
 	return parseValkeyGetMessage(msg, err)
 }
 
@@ -34,6 +35,7 @@ func (p *ValkeyCacheProvider) Set(ctx context.Context, key string, value []byte,
 	if ttl > 0 {
 		return p.client.Do(ctx, builder.Px(ttl).Build()).Error()
 	}
+
 	return p.client.Do(ctx, builder.Build()).Error()
 }
 
@@ -50,11 +52,13 @@ func parseValkeyGetMessage(msg valkey.ValkeyMessage, err error) ([]byte, bool, e
 		if errors.Is(err, valkey.Nil) {
 			return nil, false, nil
 		}
+
 		return nil, false, err
 	}
 	value, err := msg.AsBytes()
 	if err != nil {
 		return nil, false, err
 	}
+
 	return value, true, nil
 }

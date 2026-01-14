@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"time"
 
-	dgraphristretto "github.com/dgraph-io/ristretto"
 	"github.com/abema/crema"
 	cremaristretto "github.com/abema/crema/ext/ristretto"
+	dgraphristretto "github.com/dgraph-io/ristretto"
 )
 
 func ExampleRistrettoCacheProvider() {

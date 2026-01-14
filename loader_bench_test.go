@@ -48,6 +48,7 @@ func BenchmarkLoader(b *testing.B) {
 									if sleepDuration > 0 {
 										time.Sleep(sleepDuration)
 									}
+
 									return len(key), nil
 								}
 								if _, _, err := loader.load(ctx, key, loadFunc); err != nil {
@@ -66,6 +67,7 @@ func selectKey(idx uint64, collisionPercent int) string {
 	if idx%100 < uint64(collisionPercent) {
 		return keyFor(0)
 	}
+
 	return keyFor(idx)
 }
 
@@ -84,5 +86,6 @@ func keyFor(idx uint64) string {
 			break
 		}
 	}
+
 	return string(buf[:])
 }

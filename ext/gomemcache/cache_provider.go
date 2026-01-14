@@ -5,8 +5,8 @@ import (
 	"math"
 	"time"
 
-	"github.com/bradfitz/gomemcache/memcache"
 	"github.com/abema/crema"
+	"github.com/bradfitz/gomemcache/memcache"
 )
 
 // MemcacheCacheProvider stores cache entries in Memcached.
@@ -28,11 +28,13 @@ func (p *MemcacheCacheProvider) Get(_ context.Context, key string) ([]byte, bool
 		if err == memcache.ErrCacheMiss {
 			return nil, false, nil
 		}
+
 		return nil, false, err
 	}
 	if item == nil {
 		return nil, false, nil
 	}
+
 	return item.Value, true, nil
 }
 
@@ -42,6 +44,7 @@ func (p *MemcacheCacheProvider) Set(_ context.Context, key string, value []byte,
 	if ttl > 0 {
 		item.Expiration = ttlSeconds(ttl)
 	}
+
 	return p.client.Set(item)
 }
 
@@ -50,6 +53,7 @@ func (p *MemcacheCacheProvider) Delete(_ context.Context, key string) error {
 	if err := p.client.Delete(key); err != nil && err != memcache.ErrCacheMiss {
 		return err
 	}
+
 	return nil
 }
 
@@ -64,5 +68,6 @@ func ttlSeconds(ttl time.Duration) int32 {
 	if seconds < 1 {
 		return 1
 	}
+
 	return seconds
 }

@@ -41,8 +41,10 @@ func (t *testMemcacheClient) Get(key string) (*memcache.Item, error) {
 	}
 	if !item.expiresAt.IsZero() && time.Now().After(item.expiresAt) {
 		delete(t.items, key)
+
 		return nil, memcache.ErrCacheMiss
 	}
+
 	return &memcache.Item{Key: key, Value: append([]byte(nil), item.value...)}, nil
 }
 
@@ -57,6 +59,7 @@ func (t *testMemcacheClient) Set(item *memcache.Item) error {
 		stored.expiresAt = time.Now().Add(time.Duration(item.Expiration) * time.Second)
 	}
 	t.items[item.Key] = stored
+
 	return nil
 }
 
@@ -74,8 +77,10 @@ func (t *testMemcacheClient) Delete(key string) error {
 	}
 	if !item.expiresAt.IsZero() && time.Now().After(item.expiresAt) {
 		delete(t.items, key)
+
 		return memcache.ErrCacheMiss
 	}
 	delete(t.items, key)
+
 	return nil
 }

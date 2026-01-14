@@ -46,6 +46,7 @@ func (j JSONByteStringCodec[V]) Encode(value CacheObject[V]) ([]byte, error) {
 	if len(b) > 0 && b[len(b)-1] == '\n' {
 		b = b[:len(b)-1]
 	}
+
 	return b, nil
 }
 
@@ -55,5 +56,6 @@ func (j JSONByteStringCodec[V]) Decode(data []byte) (CacheObject[V], error) {
 	if err := json.Unmarshal(data, &out); err != nil {
 		return CacheObject[V]{}, err
 	}
+
 	return out, nil
 }

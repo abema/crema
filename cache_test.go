@@ -50,6 +50,7 @@ func TestCache_GetOrLoadUsesCachedValue(t *testing.T) {
 	var calls int32
 	loader := func(context.Context) (int, error) {
 		atomic.AddInt32(&calls, 1)
+
 		return 0, nil
 	}
 
@@ -146,6 +147,7 @@ func TestCache_GetOrLoadSkipsCacheOnGetError(t *testing.T) {
 	var calls int32
 	loader := func(context.Context) (int, error) {
 		atomic.AddInt32(&calls, 1)
+
 		return 77, nil
 	}
 

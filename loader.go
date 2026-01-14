@@ -1,4 +1,3 @@
-//nolint:unused
 package crema
 
 import (
@@ -6,6 +5,8 @@ import (
 	"hash/maphash"
 	"sync"
 )
+
+const defaultShardCount = 16
 
 var mapHashSeed = maphash.MakeSeed()
 
@@ -41,10 +42,11 @@ func (l *singleflightLoader[V]) shardFor(key string) *singleflightShard[V] {
 }
 
 func newSingleflightLoader[V any](metrics MetricsProvider) *singleflightLoader[V] {
-	shards := make([]singleflightShard[V], 16)
+	shards := make([]singleflightShard[V], defaultShardCount)
 	for i := range shards {
 		shards[i].inflight = make(map[string]*inflight[V])
 	}
+
 	return &singleflightLoader[V]{
 		shards:  shards,
 		metrics: metrics,
@@ -53,6 +55,7 @@ func newSingleflightLoader[V any](metrics MetricsProvider) *singleflightLoader[V
 
 func newInflight[V any](ctx context.Context) *inflight[V] {
 	ctx, cancel := context.WithCancel(context.WithoutCancel(ctx))
+
 	return &inflight[V]{
 		ctx:    ctx,
 		cancel: cancel,
@@ -75,14 +78,17 @@ func (l *singleflightLoader[V]) acquireInflight(ctx context.Context, key string)
 		case <-inf.doneCh:
 			newInf := newInflight[V](ctx)
 			shard.inflight[key] = newInf
+
 			return newInf, true, shard
 		default:
 		}
 		inf.refs++
+
 		return inf, false, shard
 	} else {
 		newInf := newInflight[V](ctx)
 		shard.inflight[key] = newInf
+
 		return newInf, true, shard
 	}
 }
@@ -129,6 +135,7 @@ func (l *singleflightLoader[V]) load(ctx context.Context, key string, loader Cac
 	case <-ctx.Done():
 		l.releaseInflight(key, inf, shard)
 		var zero V
+
 		return zero, leader, ctx.Err()
 	case <-inf.doneCh:
 	}
@@ -138,6 +145,7 @@ func (l *singleflightLoader[V]) load(ctx context.Context, key string, loader Cac
 
 	if err != nil {
 		var zero V
+
 		return zero, leader, err
 	}
 
@@ -152,6 +160,7 @@ func (directLoader[V]) load(ctx context.Context, key string, loader CacheLoadFun
 	v, err := loader(ctx)
 	if err != nil {
 		var zero V
+
 		return zero, true, err
 	}
 

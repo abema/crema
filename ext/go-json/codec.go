@@ -3,8 +3,8 @@ package gojson
 import (
 	"bytes"
 
-	json "github.com/goccy/go-json"
 	"github.com/abema/crema"
+	json "github.com/goccy/go-json"
 )
 
 // JSONByteStringCodec marshals cache objects as JSON bytes via goccy/go-json.
@@ -24,6 +24,7 @@ func (j JSONByteStringCodec[V]) Encode(value crema.CacheObject[V]) ([]byte, erro
 	if len(b) > 0 && b[len(b)-1] == '\n' {
 		b = b[:len(b)-1]
 	}
+
 	return b, nil
 }
 
@@ -33,5 +34,6 @@ func (j JSONByteStringCodec[V]) Decode(data []byte) (crema.CacheObject[V], error
 	if err := json.Unmarshal(data, &out); err != nil {
 		return crema.CacheObject[V]{}, err
 	}
+
 	return out, nil
 }

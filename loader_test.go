@@ -24,6 +24,7 @@ func TestSingleflightLoader_LoadsOnce(t *testing.T) {
 			close(started)
 		}
 		<-release
+
 		return 42, nil
 	}
 
@@ -36,6 +37,7 @@ func TestSingleflightLoader_LoadsOnce(t *testing.T) {
 		value, err := cache.GetOrLoad(context.Background(), "key", time.Second, loader)
 		if err != nil {
 			t.Errorf("first call returned error: %v", err)
+
 			return
 		}
 		results[0] = value
@@ -48,6 +50,7 @@ func TestSingleflightLoader_LoadsOnce(t *testing.T) {
 		value, err := cache.GetOrLoad(context.Background(), "key", time.Second, loader)
 		if err != nil {
 			t.Errorf("second call returned error: %v", err)
+
 			return
 		}
 		results[1] = value
@@ -101,6 +104,7 @@ func TestSingleflightLoader_SharedWhenConcurrent(t *testing.T) {
 			close(started)
 		}
 		<-unblock
+
 		return 99, nil
 	}
 
@@ -182,6 +186,7 @@ func TestSingleflightLoader_ContextDone(t *testing.T) {
 			close(started)
 		}
 		<-unblock
+
 		return 123, nil
 	}
 
@@ -249,6 +254,7 @@ func TestSingleflightLoader_LeaderContextDoneDoesNotBlock(t *testing.T) {
 	loader := func(context.Context) (int, error) {
 		close(started)
 		<-block
+
 		return 7, nil
 	}
 
@@ -377,6 +383,7 @@ func TestDirectLoader_LoadUsesContext(t *testing.T) {
 	ctx := context.WithValue(context.Background(), ctxKey{}, "ok")
 	loader := func(ctx context.Context) (string, error) {
 		value, _ := ctx.Value(ctxKey{}).(string)
+
 		return value, nil
 	}
 

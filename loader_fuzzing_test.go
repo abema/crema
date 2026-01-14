@@ -38,12 +38,14 @@ func FuzzSingleflightLoaderLoad(f *testing.F) {
 			if len(key) < 2 {
 				return false
 			}
+
 			return (key[1]-'0')%2 == 1
 		}
 		valueForKey := func(key string) int {
 			if len(key) < 2 {
 				return 0
 			}
+
 			return int(key[1]-'0') * 10
 		}
 
@@ -62,6 +64,7 @@ func FuzzSingleflightLoaderLoad(f *testing.F) {
 				if wantErr {
 					return 0, expectErr
 				}
+
 				return val, nil
 			}
 		}

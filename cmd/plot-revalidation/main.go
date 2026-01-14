@@ -1,6 +1,4 @@
 // Command plot-revalidation generates an SVG plot of the revalidation probability curves.
-//
-//nolint:errcheck
 package main
 
 import (
@@ -9,8 +7,10 @@ import (
 	"os"
 )
 
-const outputPath = "revalidation.svg"
-const samples = 50
+const (
+	outputPath = "revalidation.svg"
+	samples    = 50
+)
 
 var maxSecondsList = []int64{30, 60, 120, 300}
 

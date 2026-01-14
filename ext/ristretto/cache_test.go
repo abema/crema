@@ -19,6 +19,7 @@ func newTestCache(t *testing.T) *dgraphristretto.Cache {
 	if err != nil {
 		t.Fatalf("create cache: %v", err)
 	}
+
 	return cache
 }
 
@@ -139,6 +140,7 @@ func TestRistrettoCacheProvider_WithCostFunc(t *testing.T) {
 	var called bool
 	provider, err := NewRistrettoCacheProvider[[]byte](cache, WithCostFunc(func(value []byte) int64 {
 		called = true
+
 		return int64(len(value))
 	}))
 	if err != nil {

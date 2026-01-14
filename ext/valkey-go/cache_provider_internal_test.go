@@ -92,6 +92,7 @@ func newValkeyNullMessage() valkey.ValkeyMessage {
 	var msg valkey.ValkeyMessage
 	raw := (*rawValkeyMessage)(unsafe.Pointer(&msg))
 	raw.typ = respTypeNull
+
 	return msg
 }
 
@@ -100,5 +101,6 @@ func newValkeyIntMessage(value int64) valkey.ValkeyMessage {
 	raw := (*rawValkeyMessage)(unsafe.Pointer(&msg))
 	raw.typ = respTypeInteger
 	raw.intlen = value
+
 	return msg
 }
