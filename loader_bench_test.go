@@ -16,7 +16,7 @@ func BenchmarkLoader(b *testing.B) {
 		{
 			name: "singleflight",
 			newLoader: func() internalLoader[int] {
-				return newSingleflightLoader[int](NoopMetricsProvider{})
+				return newSingleflightLoader[int](NoopMetricsProvider{}, 0)
 			},
 		},
 		{

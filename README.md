@@ -58,6 +58,7 @@ println(value)
 
 - `WithRevalidationWindow(duration)`: Set the revalidation window
 - `WithDirectLoader()`: Disable singleflight and call loaders directly
+- `WithMaxLoadTimeout(duration)`: Set max duration for singleflight loaders (ignored with `WithDirectLoader()`)
 - `WithLogger(logger)`: Override warning logger for get/set failures
 
 ## Implementations

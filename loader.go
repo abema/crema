@@ -5,6 +5,7 @@ import (
 	"hash/maphash"
 	"runtime"
 	"sync"
+	"time"
 )
 
 const (
@@ -36,10 +37,11 @@ type inflight[V any] struct {
 var _ internalLoader[any] = (*singleflightLoader[any])(nil)
 
 type singleflightLoader[V any] struct {
-	_            noCopy
-	shards       []singleflightShard[V]
-	inflightPool sync.Pool
-	metrics      MetricsProvider
+	_              noCopy
+	shards         []singleflightShard[V]
+	inflightPool   sync.Pool
+	metrics        MetricsProvider
+	maxLoadTimeout time.Duration
 }
 
 type singleflightShard[V any] struct {
@@ -52,16 +54,17 @@ func (l *singleflightLoader[V]) shardFor(key string) *singleflightShard[V] {
 	return &l.shards[hashKey(key)%uint64(len(l.shards))]
 }
 
-func newSingleflightLoader[V any](metrics MetricsProvider) *singleflightLoader[V] {
+func newSingleflightLoader[V any](metrics MetricsProvider, maxLoadTimeout time.Duration) *singleflightLoader[V] {
 	shards := make([]singleflightShard[V], shardCount)
 	for i := range shards {
 		shards[i].inflight = make(map[string]*inflight[V])
 	}
 
 	return &singleflightLoader[V]{
-		shards:       shards,
-		metrics:      metrics,
-		inflightPool: sync.Pool{New: func() any { return &inflight[V]{} }},
+		shards:         shards,
+		metrics:        metrics,
+		maxLoadTimeout: maxLoadTimeout,
+		inflightPool:   sync.Pool{New: func() any { return &inflight[V]{} }},
 	}
 }
 
@@ -70,7 +73,13 @@ func hashKey(key string) uint64 {
 }
 
 func (l *singleflightLoader[V]) newInflight(ctx context.Context) *inflight[V] {
-	ctx, cancel := context.WithCancel(context.WithoutCancel(ctx))
+	ctx = context.WithoutCancel(ctx)
+	var cancel context.CancelFunc
+	if l.maxLoadTimeout > 0 {
+		ctx, cancel = context.WithTimeout(ctx, l.maxLoadTimeout)
+	} else {
+		ctx, cancel = context.WithCancel(ctx)
+	}
 
 	var val V
 	inf := l.inflightPool.Get().(*inflight[V])

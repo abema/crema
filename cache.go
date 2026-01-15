@@ -33,6 +33,7 @@ type cacheImpl[V any, S any] struct {
 	now                            func() time.Time
 	steepness                      float64
 	revalidationWindowMilliseconds int64
+	maxLoadTimeout                 time.Duration
 	random                         func() float64 // must goroutine safe
 }
 
@@ -91,6 +92,18 @@ func WithRevalidationWindow[V any, S any](duration time.Duration) CacheOption[V,
 	}
 }
 
+// WithMaxLoadTimeout sets the maximum duration allowed for loader execution.
+// A non-positive duration disables the timeout.
+func WithMaxLoadTimeout[V any, S any](duration time.Duration) CacheOption[V, S] {
+	return func(c *cacheImpl[V, S]) {
+		c.maxLoadTimeout = duration
+		switch loader := c.internalLoader.(type) {
+		case *singleflightLoader[V]:
+			loader.maxLoadTimeout = duration
+		}
+	}
+}
+
 // NewCache constructs a Cache with defaults and optional overrides.
 func NewCache[V any, S any](provider CacheProvider[S], codec SerializationCodec[V, S], opts ...CacheOption[V, S]) Cache[V, S] {
 	steepness, revalidationWindowMilliseconds := calculateSteepnessAndRevalidationWindow(defaultRevalidationWindowMilliseconds)
@@ -100,11 +113,12 @@ func NewCache[V any, S any](provider CacheProvider[S], codec SerializationCodec[
 		codec:                          codec,
 		logger:                         slog.New(noopLogHandler{}),
 		metrics:                        metrics,
-		internalLoader:                 newSingleflightLoader[V](metrics),
+		internalLoader:                 newSingleflightLoader[V](metrics, 0),
 		now:                            time.Now,
 		random:                         rand.Float64,
 		steepness:                      steepness,
 		revalidationWindowMilliseconds: revalidationWindowMilliseconds,
+		maxLoadTimeout:                 0,
 	}
 	for _, opt := range opts {
 		if opt == nil {

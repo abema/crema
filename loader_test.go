@@ -2,6 +2,7 @@ package crema
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -95,7 +96,7 @@ func TestSingleflightLoader_LoadsOnce(t *testing.T) {
 func TestSingleflightLoader_SharedWhenConcurrent(t *testing.T) {
 	t.Parallel()
 
-	loaderImpl := newSingleflightLoader[int](NoopMetricsProvider{})
+	loaderImpl := newSingleflightLoader[int](NoopMetricsProvider{}, 0)
 	started := make(chan struct{})
 	unblock := make(chan struct{})
 	var calls int32
@@ -177,7 +178,7 @@ func TestSingleflightLoader_SharedWhenConcurrent(t *testing.T) {
 func TestSingleflightLoader_ContextDone(t *testing.T) {
 	t.Parallel()
 
-	loaderImpl := newSingleflightLoader[int](NoopMetricsProvider{})
+	loaderImpl := newSingleflightLoader[int](NoopMetricsProvider{}, 0)
 	started := make(chan struct{})
 	unblock := make(chan struct{})
 	var calls int32
@@ -248,7 +249,7 @@ func TestSingleflightLoader_ContextDone(t *testing.T) {
 func TestSingleflightLoader_LeaderContextDoneDoesNotBlock(t *testing.T) {
 	t.Parallel()
 
-	loaderImpl := newSingleflightLoader[int](NoopMetricsProvider{})
+	loaderImpl := newSingleflightLoader[int](NoopMetricsProvider{}, 0)
 	started := make(chan struct{})
 	block := make(chan struct{})
 	loader := func(context.Context) (int, error) {
@@ -283,7 +284,7 @@ func TestSingleflightLoader_LeaderContextDoneDoesNotBlock(t *testing.T) {
 func TestSingleflightLoader_AcquireAfterDoneReplacesInflight(t *testing.T) {
 	t.Parallel()
 
-	loaderImpl := newSingleflightLoader[int](NoopMetricsProvider{})
+	loaderImpl := newSingleflightLoader[int](NoopMetricsProvider{}, 0)
 	ctx := context.Background()
 	inf := loaderImpl.newInflight(ctx)
 	shard := loaderImpl.shardFor("key")
@@ -315,7 +316,7 @@ func TestSingleflightLoader_AcquireAfterDoneReplacesInflight(t *testing.T) {
 func TestSingleflightLoader_PoolPutOnlyAfterDone(t *testing.T) {
 	t.Parallel()
 
-	loaderImpl := newSingleflightLoader[int](NoopMetricsProvider{})
+	loaderImpl := newSingleflightLoader[int](NoopMetricsProvider{}, 0)
 	ctx := context.Background()
 
 	inf := loaderImpl.newInflight(ctx)
@@ -370,7 +371,7 @@ func TestSingleflightLoader_PoolPutOnlyAfterDone(t *testing.T) {
 func TestSingleflightLoader_PropagatesLoaderError(t *testing.T) {
 	t.Parallel()
 
-	loaderImpl := newSingleflightLoader[int](NoopMetricsProvider{})
+	loaderImpl := newSingleflightLoader[int](NoopMetricsProvider{}, 0)
 	expectErr := context.Canceled
 	loader := func(context.Context) (int, error) {
 		return 0, expectErr
@@ -385,6 +386,54 @@ func TestSingleflightLoader_PropagatesLoaderError(t *testing.T) {
 	}
 	if got != 0 {
 		t.Fatalf("expected zero value, got %d", got)
+	}
+}
+
+func TestSingleflightLoader_LoadTimesOut(t *testing.T) {
+	t.Parallel()
+
+	timeout := 10 * time.Millisecond
+	loaderImpl := newSingleflightLoader[int](NoopMetricsProvider{}, timeout)
+	start := time.Now()
+	loader := func(ctx context.Context) (int, error) {
+		<-ctx.Done()
+		return 0, ctx.Err()
+	}
+
+	_, leader, err := loaderImpl.load(context.Background(), "key", loader)
+	if err != context.DeadlineExceeded {
+		t.Fatalf("expected deadline exceeded, got %v", err)
+	}
+	if !leader {
+		t.Fatalf("expected leader=true, got false")
+	}
+	if time.Since(start) > 200*time.Millisecond {
+		t.Fatalf("expected timeout to fire promptly, took %v", time.Since(start))
+	}
+}
+
+func TestSingleflightLoader_NewInflightNoTimeout(t *testing.T) {
+	t.Parallel()
+
+	loaderImpl := newSingleflightLoader[int](NoopMetricsProvider{}, 0)
+	loader := func(ctx context.Context) (int, error) {
+		if _, ok := ctx.Deadline(); ok {
+			return 0, errors.New("unexpected deadline")
+		}
+		time.Sleep(20 * time.Millisecond)
+
+		return 1, nil
+	}
+
+	got, leader, err := loaderImpl.load(context.Background(), "key", loader)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if !leader {
+		t.Fatalf("expected leader=true, got false")
+	}
+	if got != 1 {
+		t.Fatalf("expected value 1, got %d", got)
 	}
 }
 

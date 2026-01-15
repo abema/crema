@@ -403,6 +403,26 @@ func TestWithDirectLoader_UsesDirectLoader(t *testing.T) {
 	}
 }
 
+func TestWithMaxLoadTimeout_SetsSingleflightTimeout(t *testing.T) {
+	t.Parallel()
+
+	provider := &testMemoryProvider[int]{items: make(map[string]CacheObject[int])}
+	timeout := 1500 * time.Millisecond
+	cache := NewCache(provider, NoopSerializationCodec[int]{}, WithMaxLoadTimeout[int, CacheObject[int]](timeout))
+	impl := cache.(*cacheImpl[int, CacheObject[int]])
+
+	if impl.maxLoadTimeout != timeout {
+		t.Fatalf("expected maxLoadTimeout %v, got %v", timeout, impl.maxLoadTimeout)
+	}
+	loader, ok := impl.internalLoader.(*singleflightLoader[int])
+	if !ok {
+		t.Fatalf("expected internal loader to be singleflightLoader")
+	}
+	if loader.maxLoadTimeout != timeout {
+		t.Fatalf("expected loader maxLoadTimeout %v, got %v", timeout, loader.maxLoadTimeout)
+	}
+}
+
 func TestWithRevalidationWindow_SetsValues(t *testing.T) {
 	t.Parallel()
 

@@ -19,7 +19,7 @@ func FuzzSingleflightLoaderLoad(f *testing.F) {
 			return
 		}
 
-		loaderImpl := newSingleflightLoader[int](NoopMetricsProvider{})
+		loaderImpl := newSingleflightLoader[int](NoopMetricsProvider{}, 0)
 		expectErr := errors.New("loader error")
 		callCount := int(data[0]%16) + 1
 		calls := make([]string, callCount)
