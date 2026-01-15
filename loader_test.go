@@ -397,6 +397,7 @@ func TestSingleflightLoader_LoadTimesOut(t *testing.T) {
 	start := time.Now()
 	loader := func(ctx context.Context) (int, error) {
 		<-ctx.Done()
+
 		return 0, ctx.Err()
 	}
 
