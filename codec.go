@@ -8,34 +8,34 @@ import (
 	"fmt"
 )
 
-// SerializationCodec encodes and decodes cache objects to storage values.
+// CacheStorageCodec encodes and decodes cache objects to storage values.
 // Implementations must be safe for concurrent use by multiple goroutines.
-type SerializationCodec[V any, S any] interface {
+type CacheStorageCodec[V any, S any] interface {
 	// Encode returns the cache object encoded into storage value.
 	Encode(value CacheObject[V]) (S, error)
 	// Decode reads the storage value into a cache object.
 	Decode(data S) (CacheObject[V], error)
 }
 
-// NoopSerializationCodec passes CacheObject values through without encoding.
-type NoopSerializationCodec[V any] struct{}
+// NoopCacheStorageCodec passes CacheObject values through without encoding.
+type NoopCacheStorageCodec[V any] struct{}
 
-var _ SerializationCodec[any, CacheObject[any]] = NoopSerializationCodec[any]{}
+var _ CacheStorageCodec[any, CacheObject[any]] = NoopCacheStorageCodec[any]{}
 
 // Encode copies the cache object.
-func (n NoopSerializationCodec[V]) Encode(value CacheObject[V]) (CacheObject[V], error) {
+func (n NoopCacheStorageCodec[V]) Encode(value CacheObject[V]) (CacheObject[V], error) {
 	return value, nil
 }
 
 // Decode copies the cache object.
-func (n NoopSerializationCodec[V]) Decode(data CacheObject[V]) (CacheObject[V], error) {
+func (n NoopCacheStorageCodec[V]) Decode(data CacheObject[V]) (CacheObject[V], error) {
 	return data, nil
 }
 
 // JSONByteStringCodec marshals cache objects as JSON bytes.
 type JSONByteStringCodec[V any] struct{}
 
-var _ SerializationCodec[any, []byte] = JSONByteStringCodec[any]{}
+var _ CacheStorageCodec[any, []byte] = JSONByteStringCodec[any]{}
 
 // Encode marshals the cache object into JSON bytes without a trailing newline.
 func (j JSONByteStringCodec[V]) Encode(value CacheObject[V]) ([]byte, error) {
@@ -78,19 +78,19 @@ var (
 )
 
 type binaryCompressionCodec[V any] struct {
-	inner                  SerializationCodec[V, []byte]
+	inner                  CacheStorageCodec[V, []byte]
 	compressThresholdBytes int
 }
 
-var _ SerializationCodec[any, []byte] = &binaryCompressionCodec[any]{}
+var _ CacheStorageCodec[any, []byte] = &binaryCompressionCodec[any]{}
 
 // NewBinaryCompressionCodec returns a codec that conditionally compresses
 // encoded values with zlib when they reach the threshold.
 // A threshold of 0 always compresses, and a negative threshold disables compression.
 func NewBinaryCompressionCodec[V any](
-	inner SerializationCodec[V, []byte],
+	inner CacheStorageCodec[V, []byte],
 	compressThresholdBytes int,
-) SerializationCodec[V, []byte] {
+) CacheStorageCodec[V, []byte] {
 	return &binaryCompressionCodec[V]{
 		inner:                  inner,
 		compressThresholdBytes: compressThresholdBytes,

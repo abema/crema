@@ -10,7 +10,7 @@ import (
 
 // Cache coordinates probabilistic revalidation with optional singleflight loading.
 // Implementations are safe for concurrent use as long as CacheProvider and
-// SerializationCodec are goroutine-safe.
+// CacheStorageCodec implementations are goroutine-safe.
 // Use NewCache to construct an implementation.
 type Cache[V any, S any] interface {
 	// Get returns the cached entry for key.
@@ -26,7 +26,7 @@ type Cache[V any, S any] interface {
 type cacheImpl[V any, S any] struct {
 	_                              noCopy
 	provider                       CacheProvider[S]
-	codec                          SerializationCodec[V, S]
+	codec                          CacheStorageCodec[V, S]
 	logger                         *slog.Logger
 	metrics                        MetricsProvider
 	internalLoader                 internalLoader[V]
@@ -105,7 +105,7 @@ func WithMaxLoadTimeout[V any, S any](duration time.Duration) CacheOption[V, S] 
 }
 
 // NewCache constructs a Cache with defaults and optional overrides.
-func NewCache[V any, S any](provider CacheProvider[S], codec SerializationCodec[V, S], opts ...CacheOption[V, S]) Cache[V, S] {
+func NewCache[V any, S any](provider CacheProvider[S], codec CacheStorageCodec[V, S], opts ...CacheOption[V, S]) Cache[V, S] {
 	steepness, revalidationWindowMilliseconds := calculateSteepnessAndRevalidationWindow(defaultRevalidationWindowMilliseconds)
 	metrics := NoopMetricsProvider{}
 	cache := &cacheImpl[V, S]{

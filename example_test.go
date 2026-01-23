@@ -8,7 +8,7 @@ import (
 
 func ExampleCache() {
 	provider := &testMemoryProvider[int]{items: make(map[string]CacheObject[int])}
-	codec := NoopSerializationCodec[int]{}
+	codec := NoopCacheStorageCodec[int]{}
 	cache := NewCache(provider, codec)
 
 	value, err := cache.GetOrLoad(context.Background(), "answer", time.Minute, func(ctx context.Context) (int, error) {

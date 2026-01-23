@@ -13,7 +13,7 @@ func TestSingleflightLoader_LoadsOnce(t *testing.T) {
 	t.Parallel()
 
 	provider := &testMemoryProvider[int]{items: make(map[string]CacheObject[int])}
-	cache := NewCache(provider, NoopSerializationCodec[int]{})
+	cache := NewCache(provider, NoopCacheStorageCodec[int]{})
 	impl := cache.(*cacheImpl[int, CacheObject[int]])
 	impl.now = func() time.Time { return time.UnixMilli(1000) }
 

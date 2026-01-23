@@ -22,7 +22,7 @@ type ProtobufCodec[V proto.Message] struct {
 	Prototype V
 }
 
-var _ crema.SerializationCodec[proto.Message, []byte] = ProtobufCodec[proto.Message]{}
+var _ crema.CacheStorageCodec[proto.Message, []byte] = ProtobufCodec[proto.Message]{}
 
 var (
 	marshalOptions   = proto.MarshalOptions{}

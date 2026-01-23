@@ -6,7 +6,7 @@ A Go cache library with probabilistic revalidation and optional singleflight loa
 - Smooth probabilistic revalidation near expiry
 - Built-in singleflight loader (can be disabled)
 - Zero external dependencies in the core module
-- Pluggable storage (`CacheProvider`) and serialization (`SerializationCodec`)
+- Pluggable storage (`CacheProvider`) and storage codecs (`CacheStorageCodec`)
 
 Core functionality is covered by a high level of automated tests.
 
@@ -39,7 +39,7 @@ Go 1.22 or newer is recommended.
 
 ```go
 provider := newMemoryProvider[int]()
-codec := crema.NoopSerializationCodec[int]{}
+codec := crema.NoopCacheStorageCodec[int]{}
 cache := crema.NewCache(provider, codec)
 
 value, err := cache.GetOrLoad(context.Background(), "answer", time.Minute, func(ctx context.Context) (int, error) {
@@ -56,7 +56,7 @@ println(value)
 ## Usage Notes
 
 - **CacheProvider**: Responsible for persistence with TTL handling. Works with Redis/Memcached, files, or databases.
-- **SerializationCodec**: Encodes/decodes cached objects. Swap in JSON, protobuf, or your own codec.
+- **CacheStorageCodec**: Encodes/decodes cached objects. Swap in JSON, protobuf, or your own codec.
 - **CacheObject**: A thin wrapper holding `Value` and absolute expiry (`ExpireAtMillis`).
 
 ## Options
@@ -77,11 +77,11 @@ println(value)
 | MemcacheCacheProvider | `github.com/abema/crema/ext/gomemcache` | Memcached backend with TTL handling. | - |
 | CacheProvider | `github.com/abema/crema/ext/golang-lru` | hashicorp/golang-lru backend with default TTL. | - |
 
-### SerializationCodec
+### CacheStorageCodec
 
 | Name | Package | Notes | Example |
 | --- | --- | --- | --- |
-| NoopSerializationCodec | `github.com/abema/crema` | Pass-through codec for in-memory cache objects. | - |
+| NoopCacheStorageCodec | `github.com/abema/crema` | Pass-through codec for in-memory cache objects. | - |
 | JSONByteStringCodec | `github.com/abema/crema` | Standard library JSON encoding to `[]byte`. | [✅](example/valkey_go_test.go) |
 | JSONByteStringCodec | `github.com/abema/crema/ext/go-json` | goccy/go-json encoding to `[]byte`. | - |
 | ProtobufCodec | `github.com/abema/crema/ext/protobuf` | Protobuf encoding to `[]byte`. | [✅](example/protobuf_test.go) |
@@ -95,7 +95,7 @@ println(value)
 
 ## Concurrency
 
-`Cache` is goroutine-safe as long as `CacheProvider` and `SerializationCodec` implementations are goroutine-safe.
+`Cache` is goroutine-safe as long as `CacheProvider` and `CacheStorageCodec` implementations are goroutine-safe.
 
 ## Development
 

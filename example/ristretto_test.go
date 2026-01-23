@@ -29,7 +29,7 @@ func ExampleRistrettoCacheProvider() {
 		return
 	}
 
-	cremaCache := crema.NewCache(provider, crema.NoopSerializationCodec[string]{})
+	cremaCache := crema.NewCache(provider, crema.NoopCacheStorageCodec[string]{})
 	value, err := cremaCache.GetOrLoad(context.Background(), "greeting", time.Minute, func(ctx context.Context) (string, error) {
 		return "hello", nil
 	})

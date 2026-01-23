@@ -18,7 +18,7 @@ func TestCache_SetSkipsExpired(t *testing.T) {
 	t.Parallel()
 
 	provider := &testMemoryProvider[int]{items: make(map[string]CacheObject[int])}
-	cache := NewCache(provider, NoopSerializationCodec[int]{})
+	cache := NewCache(provider, NoopCacheStorageCodec[int]{})
 	impl := cache.(*cacheImpl[int, CacheObject[int]])
 	impl.now = func() time.Time { return time.UnixMilli(1000) }
 
@@ -42,7 +42,7 @@ func TestCache_GetOrLoadUsesCachedValue(t *testing.T) {
 		Value:          42,
 		ExpireAtMillis: 2000,
 	}
-	cache := NewCache(provider, NoopSerializationCodec[int]{})
+	cache := NewCache(provider, NoopCacheStorageCodec[int]{})
 	impl := cache.(*cacheImpl[int, CacheObject[int]])
 	impl.now = func() time.Time { return time.UnixMilli(1000) }
 	impl.random = fakeRandom(1)
@@ -74,7 +74,7 @@ func TestCache_GetOrLoadRevalidatesExpired(t *testing.T) {
 		Value:          1,
 		ExpireAtMillis: 900,
 	}
-	cache := NewCache(provider, NoopSerializationCodec[int]{})
+	cache := NewCache(provider, NoopCacheStorageCodec[int]{})
 	impl := cache.(*cacheImpl[int, CacheObject[int]])
 	impl.now = func() time.Time { return time.UnixMilli(1000) }
 
@@ -100,7 +100,7 @@ func TestCache_GetOrLoadLoaderErrorSkipsCache(t *testing.T) {
 	t.Parallel()
 
 	provider := &testMemoryProvider[int]{items: make(map[string]CacheObject[int])}
-	cache := NewCache(provider, NoopSerializationCodec[int]{})
+	cache := NewCache(provider, NoopCacheStorageCodec[int]{})
 	impl := cache.(*cacheImpl[int, CacheObject[int]])
 	impl.now = func() time.Time { return time.UnixMilli(1000) }
 
@@ -124,7 +124,7 @@ func TestCache_GetPropagatesProviderGetError(t *testing.T) {
 
 	expectErr := errors.New("get failed")
 	provider := &errorProvider[CacheObject[int]]{getErr: expectErr}
-	cache := NewCache(provider, NoopSerializationCodec[int]{})
+	cache := NewCache(provider, NoopCacheStorageCodec[int]{})
 
 	_, ok, err := cache.Get(context.Background(), "key")
 	if err != expectErr {
@@ -140,7 +140,7 @@ func TestCache_GetOrLoadSkipsCacheOnGetError(t *testing.T) {
 
 	expectErr := errors.New("get failed")
 	provider := &errorProvider[CacheObject[int]]{getErr: expectErr}
-	cache := NewCache(provider, NoopSerializationCodec[int]{})
+	cache := NewCache(provider, NoopCacheStorageCodec[int]{})
 	impl := cache.(*cacheImpl[int, CacheObject[int]])
 	impl.now = func() time.Time { return time.UnixMilli(1000) }
 
@@ -176,7 +176,7 @@ func TestCache_SetPropagatesProviderSetError(t *testing.T) {
 
 	expectErr := errors.New("set failed")
 	provider := &errorProvider[CacheObject[int]]{setErr: expectErr}
-	cache := NewCache(provider, NoopSerializationCodec[int]{})
+	cache := NewCache(provider, NoopCacheStorageCodec[int]{})
 	impl := cache.(*cacheImpl[int, CacheObject[int]])
 	impl.now = func() time.Time { return time.UnixMilli(1000) }
 
@@ -197,7 +197,7 @@ func TestCache_DeleteRemovesEntry(t *testing.T) {
 		Value:          42,
 		ExpireAtMillis: 2000,
 	}
-	cache := NewCache(provider, NoopSerializationCodec[int]{})
+	cache := NewCache(provider, NoopCacheStorageCodec[int]{})
 
 	if err := cache.Delete(context.Background(), "answer"); err != nil {
 		t.Fatalf("expected no error, got %v", err)
@@ -212,7 +212,7 @@ func TestCache_DeletePropagatesProviderError(t *testing.T) {
 
 	expectErr := errors.New("delete failed")
 	provider := &errorProvider[CacheObject[int]]{deleteErr: expectErr}
-	cache := NewCache(provider, NoopSerializationCodec[int]{})
+	cache := NewCache(provider, NoopCacheStorageCodec[int]{})
 
 	if err := cache.Delete(context.Background(), "key"); err != expectErr {
 		t.Fatalf("expected error %v, got %v", expectErr, err)
@@ -224,7 +224,7 @@ func TestCache_GetOrLoadSetErrorReturnsValue(t *testing.T) {
 
 	expectErr := errors.New("set failed")
 	provider := &errorProvider[CacheObject[int]]{setErr: expectErr}
-	cache := NewCache(provider, NoopSerializationCodec[int]{})
+	cache := NewCache(provider, NoopCacheStorageCodec[int]{})
 	impl := cache.(*cacheImpl[int, CacheObject[int]])
 	impl.now = func() time.Time { return time.UnixMilli(1000) }
 
@@ -318,7 +318,7 @@ func TestWithLogger_SetsLogger(t *testing.T) {
 	provider := &testMemoryProvider[int]{items: make(map[string]CacheObject[int])}
 	custom := slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{}))
 
-	cache := NewCache(provider, NoopSerializationCodec[int]{}, WithLogger[int, CacheObject[int]](custom))
+	cache := NewCache(provider, NoopCacheStorageCodec[int]{}, WithLogger[int, CacheObject[int]](custom))
 	impl := cache.(*cacheImpl[int, CacheObject[int]])
 
 	if impl.logger != custom {
@@ -332,7 +332,7 @@ func TestWithMetricsProvider_SetsMetrics(t *testing.T) {
 	provider := &testMemoryProvider[int]{items: make(map[string]CacheObject[int])}
 	metrics := &testMetricsProvider{}
 
-	cache := NewCache(provider, NoopSerializationCodec[int]{}, WithMetricsProvider[int, CacheObject[int]](metrics))
+	cache := NewCache(provider, NoopCacheStorageCodec[int]{}, WithMetricsProvider[int, CacheObject[int]](metrics))
 	impl := cache.(*cacheImpl[int, CacheObject[int]])
 
 	if impl.metrics != metrics {
@@ -355,7 +355,7 @@ func TestWithMetricsProvider_WithDirectLoader(t *testing.T) {
 
 	cache := NewCache(
 		provider,
-		NoopSerializationCodec[int]{},
+		NoopCacheStorageCodec[int]{},
 		WithDirectLoader[int, CacheObject[int]](),
 		WithMetricsProvider[int, CacheObject[int]](metrics),
 	)
@@ -373,7 +373,7 @@ func TestWithMetricsProvider_NilFallsBackToNoop(t *testing.T) {
 	t.Parallel()
 
 	provider := &testMemoryProvider[int]{items: make(map[string]CacheObject[int])}
-	cache := NewCache(provider, NoopSerializationCodec[int]{}, WithMetricsProvider[int, CacheObject[int]](nil))
+	cache := NewCache(provider, NoopCacheStorageCodec[int]{}, WithMetricsProvider[int, CacheObject[int]](nil))
 	impl := cache.(*cacheImpl[int, CacheObject[int]])
 
 	if impl.metrics == nil {
@@ -395,7 +395,7 @@ func TestWithDirectLoader_UsesDirectLoader(t *testing.T) {
 	t.Parallel()
 
 	provider := &testMemoryProvider[int]{items: make(map[string]CacheObject[int])}
-	cache := NewCache(provider, NoopSerializationCodec[int]{}, WithDirectLoader[int, CacheObject[int]]())
+	cache := NewCache(provider, NoopCacheStorageCodec[int]{}, WithDirectLoader[int, CacheObject[int]]())
 	impl := cache.(*cacheImpl[int, CacheObject[int]])
 
 	if _, ok := impl.internalLoader.(directLoader[int]); !ok {
@@ -408,7 +408,7 @@ func TestWithMaxLoadTimeout_SetsSingleflightTimeout(t *testing.T) {
 
 	provider := &testMemoryProvider[int]{items: make(map[string]CacheObject[int])}
 	timeout := 1500 * time.Millisecond
-	cache := NewCache(provider, NoopSerializationCodec[int]{}, WithMaxLoadTimeout[int, CacheObject[int]](timeout))
+	cache := NewCache(provider, NoopCacheStorageCodec[int]{}, WithMaxLoadTimeout[int, CacheObject[int]](timeout))
 	impl := cache.(*cacheImpl[int, CacheObject[int]])
 
 	if impl.maxLoadTimeout != timeout {
@@ -430,7 +430,7 @@ func TestWithRevalidationWindow_SetsValues(t *testing.T) {
 	target := 1500 * time.Millisecond
 	expectedSteepness, expectedWindow := calculateSteepnessAndRevalidationWindow(target.Milliseconds())
 
-	cache := NewCache(provider, NoopSerializationCodec[int]{}, WithRevalidationWindow[int, CacheObject[int]](target))
+	cache := NewCache(provider, NoopCacheStorageCodec[int]{}, WithRevalidationWindow[int, CacheObject[int]](target))
 	impl := cache.(*cacheImpl[int, CacheObject[int]])
 
 	if impl.steepness != expectedSteepness {
@@ -445,7 +445,7 @@ func TestWithRevalidationWindow_DefaultsOnZero(t *testing.T) {
 	t.Parallel()
 
 	provider := &testMemoryProvider[int]{items: make(map[string]CacheObject[int])}
-	cache := NewCache(provider, NoopSerializationCodec[int]{}, WithRevalidationWindow[int, CacheObject[int]](0))
+	cache := NewCache(provider, NoopCacheStorageCodec[int]{}, WithRevalidationWindow[int, CacheObject[int]](0))
 	impl := cache.(*cacheImpl[int, CacheObject[int]])
 
 	if impl.steepness != 0 {
@@ -478,7 +478,7 @@ func TestNewCache_IgnoresNilOption(t *testing.T) {
 		}
 	}()
 
-	cache := NewCache(provider, NoopSerializationCodec[int]{}, nil)
+	cache := NewCache(provider, NoopCacheStorageCodec[int]{}, nil)
 	impl := cache.(*cacheImpl[int, CacheObject[int]])
 
 	if impl.internalLoader == nil {
