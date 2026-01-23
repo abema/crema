@@ -18,6 +18,11 @@ type CacheStorageCodec[V any, S any] interface {
 	Decode(data S) (CacheObject[V], error)
 }
 
+// BufferReleasePolicy declares whether Decode can safely release buffer-backed input.
+type BufferReleasePolicy interface {
+	CanReleaseBufferOnDecode() bool
+}
+
 // NoopCacheStorageCodec passes CacheObject values through without encoding.
 type NoopCacheStorageCodec[V any] struct{}
 
@@ -36,7 +41,10 @@ func (n NoopCacheStorageCodec[V]) Decode(data CacheObject[V]) (CacheObject[V], e
 // JSONByteStringCodec marshals cache objects as JSON bytes.
 type JSONByteStringCodec[V any] struct{}
 
-var _ CacheStorageCodec[any, []byte] = JSONByteStringCodec[any]{}
+var (
+	_ CacheStorageCodec[any, []byte] = JSONByteStringCodec[any]{}
+	_ BufferReleasePolicy            = JSONByteStringCodec[any]{}
+)
 
 // Encode marshals the cache object into JSON bytes without a trailing newline.
 func (j JSONByteStringCodec[V]) Encode(value CacheObject[V]) ([]byte, error) {
@@ -64,6 +72,10 @@ func (j JSONByteStringCodec[V]) Decode(data []byte) (CacheObject[V], error) {
 	return out, nil
 }
 
+func (j JSONByteStringCodec[V]) CanReleaseBufferOnDecode() bool {
+	return true
+}
+
 const (
 	// DefaultCompressThresholdBytes is the default threshold size
 	// above which values are compressed in BinaryCompressionCodec.
@@ -79,9 +91,10 @@ var (
 )
 
 type binaryCompressionCodec[V any] struct {
-	inner                  CacheStorageCodec[V, []byte]
-	compressThresholdBytes int
-	bufPool                sync.Pool
+	inner                    CacheStorageCodec[V, []byte]
+	compressThresholdBytes   int
+	bufPool                  sync.Pool
+	canReleaseBufferOnDecode bool
 }
 
 var _ CacheStorageCodec[any, []byte] = &binaryCompressionCodec[any]{}
@@ -93,6 +106,11 @@ func NewBinaryCompressionCodec[V any](
 	inner CacheStorageCodec[V, []byte],
 	compressThresholdBytes int,
 ) CacheStorageCodec[V, []byte] {
+	canReleaseBufferOnDecode := false
+	if policy, ok := any(inner).(BufferReleasePolicy); ok {
+		canReleaseBufferOnDecode = policy.CanReleaseBufferOnDecode()
+	}
+
 	return &binaryCompressionCodec[V]{
 		inner:                  inner,
 		compressThresholdBytes: compressThresholdBytes,
@@ -101,6 +119,7 @@ func NewBinaryCompressionCodec[V any](
 				return bytes.NewBuffer(nil)
 			},
 		},
+		canReleaseBufferOnDecode: canReleaseBufferOnDecode,
 	}
 }
 
@@ -142,13 +161,18 @@ func (b *binaryCompressionCodec[V]) Decode(data []byte) (CacheObject[V], error) 
 	case CompressionTypeIDNone:
 		return b.inner.Decode(compressedData)
 	case CompressionTypeIDZlib:
-		var err error
-		decompressed, err := decompressZlib(compressedData)
+		decompressBuf := b.acquireBuffer()
+		if b.canReleaseBufferOnDecode {
+			// decompressBuf MUST NOT be used outside of this function scope
+			defer b.returnBuffer(decompressBuf)
+		}
+
+		err := decompressZlib(decompressBuf, compressedData)
 		if err != nil {
 			return CacheObject[V]{}, err
 		}
 
-		return b.inner.Decode(decompressed)
+		return b.inner.Decode(decompressBuf.Bytes())
 	default:
 		return CacheObject[V]{}, fmt.Errorf("unsupported compression type: %d", compressionTypeID)
 	}
@@ -180,16 +204,15 @@ func compressZlib(buf *bytes.Buffer, data []byte) error {
 	return nil
 }
 
-func decompressZlib(data []byte) ([]byte, error) {
+func decompressZlib(buf *bytes.Buffer, data []byte) error {
 	reader, err := zlib.NewReader(bytes.NewReader(data))
 	if err != nil {
-		return nil, err
+		return err
 	}
 	defer reader.Close()
-	var buf bytes.Buffer
 	if _, err := buf.ReadFrom(reader); err != nil {
-		return nil, err
+		return err
 	}
 
-	return buf.Bytes(), nil
+	return nil
 }

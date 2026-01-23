@@ -179,6 +179,23 @@ func TestProtobufCodec_EncodeRejectsInvalidUTF8(t *testing.T) {
 	}
 }
 
+func TestProtobufCodec_CanReleaseBufferOnDecode(t *testing.T) {
+	t.Parallel()
+
+	codec, err := NewProtobufCodec(&testproto.ProtoTestObject{})
+	if err != nil {
+		t.Fatalf("NewProtobufCodec() error = %v", err)
+	}
+
+	policy, ok := any(codec).(crema.BufferReleasePolicy)
+	if !ok {
+		t.Fatalf("expected BufferReleasePolicy, got %T", codec)
+	}
+	if !policy.CanReleaseBufferOnDecode() {
+		t.Fatal("expected CanReleaseBufferOnDecode to be true")
+	}
+}
+
 type valueProtoMessage struct{}
 
 func (valueProtoMessage) ProtoReflect() protoreflect.Message {

@@ -10,7 +10,10 @@ import (
 // JSONByteStringCodec marshals cache objects as JSON bytes via goccy/go-json.
 type JSONByteStringCodec[V any] struct{}
 
-var _ crema.CacheStorageCodec[any, []byte] = JSONByteStringCodec[any]{}
+var (
+	_ crema.CacheStorageCodec[any, []byte] = JSONByteStringCodec[any]{}
+	_ crema.BufferReleasePolicy            = JSONByteStringCodec[any]{}
+)
 
 // Encode marshals the cache object into JSON bytes without a trailing newline.
 func (j JSONByteStringCodec[V]) Encode(value crema.CacheObject[V]) ([]byte, error) {
@@ -36,4 +39,8 @@ func (j JSONByteStringCodec[V]) Decode(data []byte) (crema.CacheObject[V], error
 	}
 
 	return out, nil
+}
+
+func (j JSONByteStringCodec[V]) CanReleaseBufferOnDecode() bool {
+	return true
 }

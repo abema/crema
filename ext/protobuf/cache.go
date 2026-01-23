@@ -22,7 +22,10 @@ type ProtobufCodec[V proto.Message] struct {
 	Prototype V
 }
 
-var _ crema.CacheStorageCodec[proto.Message, []byte] = ProtobufCodec[proto.Message]{}
+var (
+	_ crema.CacheStorageCodec[proto.Message, []byte] = ProtobufCodec[proto.Message]{}
+	_ crema.BufferReleasePolicy                      = ProtobufCodec[proto.Message]{}
+)
 
 var (
 	marshalOptions   = proto.MarshalOptions{}
@@ -74,6 +77,10 @@ func (p ProtobufCodec[V]) Decode(data []byte) (crema.CacheObject[V], error) {
 		Value:          msg,
 		ExpireAtMillis: envelope.GetExpireAtMillis(),
 	}, nil
+}
+
+func (p ProtobufCodec[V]) CanReleaseBufferOnDecode() bool {
+	return true
 }
 
 func isNilPrototype[V proto.Message](prototype V) bool {

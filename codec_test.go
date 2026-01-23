@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -194,5 +195,91 @@ func TestBinaryCompressionCodec_UnsupportedCompressionType(t *testing.T) {
 	codec := NewBinaryCompressionCodec(binaryCompressionTestCodec{}, 1)
 	if _, err := codec.Decode([]byte{0xff, 0x00}); err == nil {
 		t.Fatal("expected decode error for unsupported compression type, got nil")
+	}
+}
+
+type bufferReleasePolicyCodec struct {
+	binaryCompressionTestCodec
+
+	canRelease bool
+}
+
+func (b bufferReleasePolicyCodec) CanReleaseBufferOnDecode() bool {
+	return b.canRelease
+}
+
+func TestBinaryCompressionCodec_CanReleaseBufferOnDecode(t *testing.T) {
+	t.Parallel()
+
+	codec := NewBinaryCompressionCodec(binaryCompressionTestCodec{}, 1)
+	binaryCodec, ok := any(codec).(*binaryCompressionCodec[string])
+	if !ok {
+		t.Fatalf("expected binary compression codec, got %T", codec)
+	}
+	if binaryCodec.canReleaseBufferOnDecode {
+		t.Fatal("expected canReleaseBufferOnDecode to be false by default")
+	}
+
+	withPolicy := NewBinaryCompressionCodec(bufferReleasePolicyCodec{canRelease: true}, 1)
+	binaryWithPolicy, ok := any(withPolicy).(*binaryCompressionCodec[string])
+	if !ok {
+		t.Fatalf("expected binary compression codec, got %T", withPolicy)
+	}
+	if !binaryWithPolicy.canReleaseBufferOnDecode {
+		t.Fatal("expected canReleaseBufferOnDecode to be true with policy")
+	}
+}
+
+type bufferCheckingCodec struct {
+	buf            *bytes.Buffer
+	sawSameBacking bool
+}
+
+func (b *bufferCheckingCodec) Encode(value CacheObject[[]byte]) ([]byte, error) {
+	return value.Value, nil
+}
+
+func (b *bufferCheckingCodec) Decode(data []byte) (CacheObject[[]byte], error) {
+	if len(data) == 0 || len(b.buf.Bytes()) == 0 {
+		return CacheObject[[]byte]{}, errors.New("empty payload")
+	}
+	if &data[0] == &b.buf.Bytes()[0] {
+		b.sawSameBacking = true
+	}
+
+	return CacheObject[[]byte]{Value: append([]byte(nil), data...)}, nil
+}
+
+func (b *bufferCheckingCodec) CanReleaseBufferOnDecode() bool {
+	return true
+}
+
+func TestBinaryCompressionCodec_CanReleaseBufferOnDecodeTrueUsesBuffer(t *testing.T) {
+	t.Parallel()
+
+	pooled := bytes.NewBuffer(nil)
+	inner := &bufferCheckingCodec{buf: pooled}
+	codec := &binaryCompressionCodec[[]byte]{
+		inner:                  inner,
+		compressThresholdBytes: 0,
+		bufPool: sync.Pool{
+			New: func() any {
+				return pooled
+			},
+		},
+		canReleaseBufferOnDecode: true,
+	}
+
+	compressBuf := bytes.NewBuffer(nil)
+	if err := compressZlib(compressBuf, []byte("hello")); err != nil {
+		t.Fatalf("compressZlib() error = %v", err)
+	}
+	data := append([]byte{CompressionTypeIDZlib}, compressBuf.Bytes()...)
+
+	if _, err := codec.Decode(data); err != nil {
+		t.Fatalf("Decode() error = %v", err)
+	}
+	if !inner.sawSameBacking {
+		t.Fatal("expected decode to pass pooled buffer to inner codec")
 	}
 }
