@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sync"
 )
 
 // CacheStorageCodec encodes and decodes cache objects to storage values.
@@ -80,6 +81,7 @@ var (
 type binaryCompressionCodec[V any] struct {
 	inner                  CacheStorageCodec[V, []byte]
 	compressThresholdBytes int
+	bufPool                sync.Pool
 }
 
 var _ CacheStorageCodec[any, []byte] = &binaryCompressionCodec[any]{}
@@ -94,6 +96,11 @@ func NewBinaryCompressionCodec[V any](
 	return &binaryCompressionCodec[V]{
 		inner:                  inner,
 		compressThresholdBytes: compressThresholdBytes,
+		bufPool: sync.Pool{
+			New: func() any {
+				return bytes.NewBuffer(nil)
+			},
+		},
 	}
 }
 
@@ -110,14 +117,17 @@ func (b *binaryCompressionCodec[V]) Encode(value CacheObject[V]) ([]byte, error)
 		return buf, nil
 	}
 
-	compressedBuf, err := compressZlib(innerBuf)
-	if err != nil {
+	// compressBuf MUST NOT be used outside of this function scope
+	compressBuf := b.acquireBuffer()
+	defer b.returnBuffer(compressBuf)
+
+	if err := compressZlib(compressBuf, innerBuf); err != nil {
 		return nil, err
 	}
 
-	buf := make([]byte, 1+len(compressedBuf))
+	buf := make([]byte, 1+compressBuf.Len())
 	buf[0] = CompressionTypeIDZlib
-	copy(buf[1:], compressedBuf)
+	copy(buf[1:], compressBuf.Bytes())
 
 	return buf, nil
 }
@@ -133,30 +143,41 @@ func (b *binaryCompressionCodec[V]) Decode(data []byte) (CacheObject[V], error) 
 		return b.inner.Decode(compressedData)
 	case CompressionTypeIDZlib:
 		var err error
-		data, err = decompressZlib(compressedData)
+		decompressed, err := decompressZlib(compressedData)
 		if err != nil {
 			return CacheObject[V]{}, err
 		}
 
-		return b.inner.Decode(data)
+		return b.inner.Decode(decompressed)
 	default:
 		return CacheObject[V]{}, fmt.Errorf("unsupported compression type: %d", compressionTypeID)
 	}
 }
 
-func compressZlib(data []byte) ([]byte, error) {
-	var buf bytes.Buffer
-	writer := zlib.NewWriter(&buf)
+func (b *binaryCompressionCodec[V]) acquireBuffer() *bytes.Buffer {
+	buf := b.bufPool.Get().(*bytes.Buffer)
+	buf.Reset()
+
+	return buf
+}
+
+func (b *binaryCompressionCodec[V]) returnBuffer(buf *bytes.Buffer) {
+	buf.Reset()
+	b.bufPool.Put(buf)
+}
+
+func compressZlib(buf *bytes.Buffer, data []byte) error {
+	writer := zlib.NewWriter(buf)
 	if _, err := writer.Write(data); err != nil {
 		_ = writer.Close()
 
-		return nil, err
+		return err
 	}
 	if err := writer.Close(); err != nil {
-		return nil, err
+		return err
 	}
 
-	return buf.Bytes(), nil
+	return nil
 }
 
 func decompressZlib(data []byte) ([]byte, error) {
