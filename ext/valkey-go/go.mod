@@ -4,7 +4,7 @@ go 1.24.9
 
 require (
 	github.com/abema/crema v0.0.0
-	github.com/alicebob/miniredis/v2 v2.36.0
+	github.com/alicebob/miniredis/v2 v2.36.1
 	github.com/valkey-io/valkey-go v1.0.70
 )
 
