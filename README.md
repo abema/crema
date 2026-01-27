@@ -74,7 +74,7 @@ println(value)
 | --- | --- | --- | --- |
 | RistrettoCacheProvider | `github.com/abema/crema/ext/ristretto` | dgraph-io/ristretto backend with TTL support. | [✅](example/ristretto_test.go) |
 | ValkeyCacheProvider | `github.com/abema/crema/ext/valkey-go` | Valkey (Redis protocol) backend. | [✅](example/valkey_go_test.go) |
-| MemcacheCacheProvider | `github.com/abema/crema/ext/gomemcache` | Memcached backend with TTL handling. | - |
+| MemcachedCacheProvider | `github.com/abema/crema/ext/gomemcache` | Memcached backend with TTL handling. | - |
 | CacheProvider | `github.com/abema/crema/ext/golang-lru` | hashicorp/golang-lru backend with default TTL. | - |
 
 ### CacheStorageCodec
