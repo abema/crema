@@ -8,5 +8,6 @@ use (
 	./ext/gomemcache
 	./ext/protobuf
 	./ext/ristretto
+	./ext/rueidis
 	./ext/valkey-go
 )

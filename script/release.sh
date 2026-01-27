@@ -8,6 +8,7 @@ SUBMODULE_DIRS=(
   "ext/golang-lru"
   "ext/gomemcache"
   "ext/protobuf"
+  "ext/rueidis"
   "ext/ristretto"
   "ext/valkey-go"
   "example"
