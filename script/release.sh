@@ -95,6 +95,8 @@ pushd "./example" > /dev/null
     go mod tidy
   done
 popd > /dev/null
+git commit -a -m "update example to ${VERSION}"
+git push origin main
 
 echo ""
 echo "Create GitHub Release..."
