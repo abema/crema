@@ -7,11 +7,11 @@ import (
 	"time"
 )
 
-func TestMemcacheCacheProvider_GetSetDelete(t *testing.T) {
+func TestMemcachedCacheProvider_GetSetDelete(t *testing.T) {
 	t.Parallel()
 
 	client := newTestMemcacheClient()
-	provider := NewMemcacheCacheProvider(client)
+	provider := NewMemcachedCacheProvider(client)
 	ctx := context.Background()
 
 	if err := provider.Set(ctx, "key", []byte("value"), 0); err != nil {
@@ -42,11 +42,11 @@ func TestMemcacheCacheProvider_GetSetDelete(t *testing.T) {
 	}
 }
 
-func TestMemcacheCacheProvider_TTL(t *testing.T) {
+func TestMemcachedCacheProvider_TTL(t *testing.T) {
 	t.Parallel()
 
 	client := newTestMemcacheClient()
-	provider := NewMemcacheCacheProvider(client)
+	provider := NewMemcachedCacheProvider(client)
 	ctx := context.Background()
 
 	if err := provider.Set(ctx, "key", []byte("value"), time.Second); err != nil {
@@ -72,10 +72,10 @@ func TestMemcacheCacheProvider_TTL(t *testing.T) {
 	}
 }
 
-func TestMemcacheCacheProvider_GetError(t *testing.T) {
+func TestMemcachedCacheProvider_GetError(t *testing.T) {
 	t.Parallel()
 
-	provider := &MemcacheCacheProvider{
+	provider := &MemcachedCacheProvider{
 		client: &testMemcacheClient{getErr: errors.New("get failed")},
 	}
 
@@ -88,10 +88,10 @@ func TestMemcacheCacheProvider_GetError(t *testing.T) {
 	}
 }
 
-func TestMemcacheCacheProvider_GetNilItem(t *testing.T) {
+func TestMemcachedCacheProvider_GetNilItem(t *testing.T) {
 	t.Parallel()
 
-	provider := &MemcacheCacheProvider{
+	provider := &MemcachedCacheProvider{
 		client: &testMemcacheClient{getItem: nil},
 	}
 
@@ -104,10 +104,10 @@ func TestMemcacheCacheProvider_GetNilItem(t *testing.T) {
 	}
 }
 
-func TestMemcacheCacheProvider_DeleteError(t *testing.T) {
+func TestMemcachedCacheProvider_DeleteError(t *testing.T) {
 	t.Parallel()
 
-	provider := &MemcacheCacheProvider{
+	provider := &MemcachedCacheProvider{
 		client: &testMemcacheClient{deleteErr: errors.New("delete failed")},
 	}
 

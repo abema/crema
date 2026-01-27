@@ -9,20 +9,20 @@ import (
 	"github.com/bradfitz/gomemcache/memcache"
 )
 
-// MemcacheCacheProvider stores cache entries in Memcached.
-type MemcacheCacheProvider struct {
+// MemcachedCacheProvider stores cache entries in Memcached.
+type MemcachedCacheProvider struct {
 	client memcacheClient
 }
 
-var _ crema.CacheProvider[[]byte] = (*MemcacheCacheProvider)(nil)
+var _ crema.CacheProvider[[]byte] = (*MemcachedCacheProvider)(nil)
 
-// NewMemcacheCacheProvider builds a Memcached-backed cache provider.
-func NewMemcacheCacheProvider(client memcacheClient) *MemcacheCacheProvider {
-	return &MemcacheCacheProvider{client: client}
+// NewMemcachedCacheProvider builds a Memcached-backed cache provider.
+func NewMemcachedCacheProvider(client memcacheClient) *MemcachedCacheProvider {
+	return &MemcachedCacheProvider{client: client}
 }
 
 // Get retrieves a cached value from Memcached.
-func (p *MemcacheCacheProvider) Get(_ context.Context, key string) ([]byte, bool, error) {
+func (p *MemcachedCacheProvider) Get(_ context.Context, key string) ([]byte, bool, error) {
 	item, err := p.client.Get(key)
 	if err != nil {
 		if err == memcache.ErrCacheMiss {
@@ -39,7 +39,7 @@ func (p *MemcacheCacheProvider) Get(_ context.Context, key string) ([]byte, bool
 }
 
 // Set stores a cache entry in Memcached with the given TTL.
-func (p *MemcacheCacheProvider) Set(_ context.Context, key string, value []byte, ttl time.Duration) error {
+func (p *MemcachedCacheProvider) Set(_ context.Context, key string, value []byte, ttl time.Duration) error {
 	item := &memcache.Item{Key: key, Value: value}
 	if ttl > 0 {
 		item.Expiration = ttlSeconds(ttl)
@@ -49,7 +49,7 @@ func (p *MemcacheCacheProvider) Set(_ context.Context, key string, value []byte,
 }
 
 // Delete removes a cached value from Memcached.
-func (p *MemcacheCacheProvider) Delete(_ context.Context, key string) error {
+func (p *MemcachedCacheProvider) Delete(_ context.Context, key string) error {
 	if err := p.client.Delete(key); err != nil && err != memcache.ErrCacheMiss {
 		return err
 	}
