@@ -68,7 +68,7 @@ create_tag "." "${VERSION}"
 # Update submodules
 echo ""
 echo "### update submodules ###"
-for dir1 in "${MODULE_DIRS[@]}" ; do
+for dir1 in "${SUBMODULE_DIRS[@]}" ; do
   pushd ${dir1} > /dev/null
     echo "update ${dir1}/go.mod"
     go get "${MODULE_PREFIX}@${VERSION}"
@@ -83,16 +83,16 @@ git push origin main
 
 # Release submodules
 echo "### release submodules ###"
-for dir1 in "${MODULE_DIRS[@]}" ; do
+for dir1 in "${SUBMODULE_DIRS[@]}" ; do
   echo "release ${dir1}"
   create_tag "${dir1}" "${VERSION}"
 done
 
 echo "### update submodule references ###"
-for dir1 in "${MODULE_DIRS[@]}" ; do
+for dir1 in "${SUBMODULE_DIRS[@]}" ; do
   pushd ${dir1} > /dev/null
     echo "update ${dir1}"
-    for dir2 in "${MODULE_DIRS[@]}" ; do
+    for dir2 in "${SUBMODULE_DIRS[@]}" ; do
       go get "${MODULE_PREFIX}/${dir2}@${VERSION}"
       go mod tidy
     done
