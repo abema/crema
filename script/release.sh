@@ -89,8 +89,11 @@ for dir in "${SUBMODULE_DIRS[@]}" ; do
 done
 
 echo "### update example references ###"
-pushd "./example" > /dev/null
+pushd "example" > /dev/null
   for dir in "${SUBMODULE_DIRS[@]}" ; do
+    if [ "${dir}" = "example" ]; then
+      continue
+    fi
     go get "${MODULE_PREFIX}/${dir}@${VERSION}"
     go mod tidy
   done

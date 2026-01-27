@@ -4,9 +4,9 @@ go 1.24.9
 
 require (
 	github.com/abema/crema v0.0.8
-	github.com/abema/crema/ext/protobuf v0.0.1
-	github.com/abema/crema/ext/ristretto v0.0.1
-	github.com/abema/crema/ext/valkey-go v0.0.1
+	github.com/abema/crema/ext/protobuf v0.0.8
+	github.com/abema/crema/ext/ristretto v0.0.8
+	github.com/abema/crema/ext/valkey-go v0.0.8
 	github.com/dgraph-io/ristretto v0.2.0
 	github.com/valkey-io/valkey-go v1.0.70
 	google.golang.org/protobuf v1.36.11
