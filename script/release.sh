@@ -1,20 +1,28 @@
 #!/bin/bash
 set -eu -o pipefail
 
-MODULE_DIRS=(
-  "."
-  "example"
+MODULE_PREFIX="https://github.com/abema/crema"
+
+SUBMODULE_DIRS=(
   "ext/go-json"
   "ext/golang-lru"
   "ext/gomemcache"
   "ext/protobuf"
   "ext/ristretto"
   "ext/valkey-go"
+  "example"
 )
 
 usage() {
   echo "Usage: $(basename "$0") <version>"
   echo "  version: release version (e.g. v1.2.3)"
+}
+
+ensure_clean() {
+  if [ -n "$(git status --porcelain)" ]; then
+    echo "ERROR: Working tree is dirty"
+    exit 1
+  fi
 }
 
 create_tag() {
@@ -48,14 +56,51 @@ if [ "$CONFIRM" != "yes" ]; then
 fi
 echo "Releasing version ${VERSION}..."
 
+ensure_clean
+
 pushd "$(dirname "$0")/.." > /dev/null # enter root
 
-for dir in "${MODULE_DIRS[@]}" ; do
-  echo "### module ${dir} ###"
-  create_tag "${dir}" "${VERSION}"
-  echo ""
+# Release core module
+echo ""
+echo "### release core module ###"
+create_tag "." "${VERSION}"
+
+# Update submodules
+echo ""
+echo "### update submodules ###"
+for dir1 in "${MODULE_DIRS[@]}" ; do
+  pushd ${dir1} > /dev/null
+    echo "update ${dir1}/go.mod"
+    go get "${MODULE_PREFIX}@${VERSION}"
+  popd
 done
-echo "Finish push tags. Create Release..."
+
+# Commit Update
+echo ""
+echo "### commit update ###"
+git commit -a -m "update submodules to ${VERSION}"
+git push origin main
+
+# Release submodules
+echo "### release submodules ###"
+for dir1 in "${MODULE_DIRS[@]}" ; do
+  echo "release ${dir1}"
+  create_tag "${dir1}" "${VERSION}"
+done
+
+echo "### update submodule references ###"
+for dir1 in "${MODULE_DIRS[@]}" ; do
+  pushd ${dir1} > /dev/null
+    echo "update ${dir1}"
+    for dir2 in "${MODULE_DIRS[@]}" ; do
+      go get "${MODULE_PREFIX}/${dir2}@${VERSION}"
+      go mod tidy
+    done
+  popd
+done
+
+echo ""
+echo "Create GitHub Release..."
 
 gh release create "${VERSION}" --generate-notes
 

@@ -3,7 +3,7 @@ module github.com/abema/crema/example
 go 1.24.9
 
 require (
-	github.com/abema/crema v0.0.1
+	github.com/abema/crema v0.0.3
 	github.com/abema/crema/ext/protobuf v0.0.1
 	github.com/abema/crema/ext/ristretto v0.0.1
 	github.com/abema/crema/ext/valkey-go v0.0.1
