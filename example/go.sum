@@ -4,6 +4,8 @@ github.com/abema/crema/ext/protobuf v0.0.10 h1:nmvZde0prFJRCxF6GdQZvVllNMJTAwox9
 github.com/abema/crema/ext/protobuf v0.0.10/go.mod h1:cfZIQrslyielo/OnaeNEWRxSZhwieyE0e1+UwOYh6S4=
 github.com/abema/crema/ext/ristretto v0.0.10 h1:jgkp5mafw6ehs09Tj+8T4VV4qa3jvCpsK/Iq9tp1uYI=
 github.com/abema/crema/ext/ristretto v0.0.10/go.mod h1:qAoaxNiz3eMj8nYZK8L47pLcj5fs+RYiT9WGtoLMT7M=
+github.com/abema/crema/ext/rueidis v0.0.10 h1:a4kFDfuPk/Mr8ArcUI/s9hCdvJlSLG8dUmjGNzc3VKE=
+github.com/abema/crema/ext/rueidis v0.0.10/go.mod h1:yOt7ji3NaCLwAoLXO6grBglEp6W3aAqnYcmDDl+pslU=
 github.com/abema/crema/ext/valkey-go v0.0.10 h1:yVMmtrtt2SJpjg98TNzNfLqDdhL9P/e53s0zEisWI34=
 github.com/abema/crema/ext/valkey-go v0.0.10/go.mod h1:n3G5VXaboVNOMiHTF0G6eSn7JfiPYExFx9TQ65SYIn4=
 github.com/alicebob/miniredis/v2 v2.36.1 h1:Dvc5oAnNOr7BIfPn7tF269U8DvRW1dBG2D5n0WrfYMI=
@@ -26,6 +28,8 @@ github.com/pkg/errors v0.9.1 h1:FEBLx1zS214owpjy7qsBeixbURkuhQAwrK5UwLGTwt4=
 github.com/pkg/errors v0.9.1/go.mod h1:bwawxfHBFNV+L2hUp1rHADufV3IMtnDRdf1r5NINEl0=
 github.com/pmezard/go-difflib v1.0.0 h1:4DBwDE0NGyQoBHbLQYPwSUPoCMWR5BEzIk/f1lZbAQM=
 github.com/pmezard/go-difflib v1.0.0/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZNVY4sRDYZ/4=
+github.com/redis/rueidis v1.0.67 h1:v2BIArP50KkRsEkhPWyVg4pcwI3rPVehl6EYyWlPHrM=
+github.com/redis/rueidis v1.0.67/go.mod h1:Lkhr2QTgcoYBhxARU7kJRO8SyVlgUuEkcJO1Y8MCluA=
 github.com/stretchr/testify v1.8.4 h1:CcVxjf3Q8PM0mHUKJCdn+eZZtm5yQwehR5yeSVQQcUk=
 github.com/stretchr/testify v1.8.4/go.mod h1:sz/lmYIOXD/1dqDmKjjqLyZ2RngseejIcXlSw2iwfAo=
 github.com/valkey-io/valkey-go v1.0.70 h1:mjYNT8qiazxDAJ0QNQ8twWT/YFOkOoRd40ERV2mB49Y=
