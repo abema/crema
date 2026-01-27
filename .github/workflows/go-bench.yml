@@ -27,6 +27,6 @@ jobs:
           restore-keys: |
             v1-${{ runner.os }}-go-bench-${{ matrix.go-version }}-
       - name: setup-git
-        run: git config --global url."https://github-actions:${{ secrets.GITHUB_TOKEN }}@github.com/".insteadOf "https://github.com/"
+        run: git config --global url."https://github-actions:${{ secrets.GITHUB_TOKEN }}@github.com/".insteadOf "https://github.com/abema/crema"
       - name: Go bench
         run: go test -v -run='^$' -bench=. ./... $(find ./ext/ -type d -mindepth 1 -maxdepth 1 | sed 's|$|/...|' | paste -sd ' ' -)
