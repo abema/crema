@@ -14,6 +14,8 @@ SUBMODULE_DIRS=(
   "example"
 )
 
+export GOPRIVATE=${MODULE_PREFIX}
+
 usage() {
   echo "Usage: $(basename "$0") <version>"
   echo "  version: release version (e.g. v1.2.3)"
@@ -75,6 +77,7 @@ for dir in "${SUBMODULE_DIRS[@]}" ; do
     go get "${MODULE_PREFIX}@${VERSION}"
   popd > /dev/null
 done
+go work sync
 
 # Commit Update
 echo ""
@@ -99,6 +102,7 @@ pushd "example" > /dev/null
     go mod tidy
   done
 popd > /dev/null
+go work sync
 git commit -a -m "update example to ${VERSION}"
 git push origin main
 
