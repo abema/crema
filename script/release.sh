@@ -1,8 +1,9 @@
 #!/bin/bash
 set -eu -o pipefail
 
-MODULE_PREFIX="github.com/abema/crema"
-RELEASE_ORIGIN="https://github.com/abema/crema"
+REPO_REF="github.com/abema/crema"
+MODULE_PREFIX=${REPO_REF}
+RELEASE_ORIGIN="https://${REPO_REF}"
 
 SUBMODULE_DIRS=(
   "ext/go-json"
@@ -48,7 +49,7 @@ release_tag() {
   tag="${tag#./}"
 
   echo "release tag ${tag}"
-  gh release create "${tag}" --generate-notes --latest="${latest}"
+  gh release create "${tag}" --repo ${REPO_REF} --generate-notes --latest="${latest}"
 }
 
 if [ $# -eq 0 ] || [ "$1" = "-h" ] || [ "$1" = "--help" ]; then
