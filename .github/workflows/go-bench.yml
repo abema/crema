@@ -3,6 +3,9 @@ name: go-bench
 on:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 env:
   GOPRIVATE: "github.com/abema/crema"
 
