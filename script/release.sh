@@ -126,7 +126,7 @@ echo ""
 echo "Create GitHub Release..."
 
 gh release create "${VERSION}" --generate-notes
-release_tag "${dir}" "${VERSION}" "false"
+release_tag "." "${VERSION}" "false"
 
 echo "Release ${VERSION} successflly."
 
