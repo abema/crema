@@ -125,8 +125,7 @@ git push release-origin main
 echo ""
 echo "Create GitHub Release..."
 
-gh release create "${VERSION}" --generate-notes
-release_tag "." "${VERSION}" "false"
+release_tag "." "${VERSION}" "true"
 
 echo "Release ${VERSION} successflly."
 
