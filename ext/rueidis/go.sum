@@ -1,5 +1,5 @@
-github.com/abema/crema v0.1.6 h1:607+JJELuWWjgW7XHWhyw8R2uHMLbnG3rJljxfv+vLA=
-github.com/abema/crema v0.1.6/go.mod h1:16fUBydoLB69oCMyfaZGJWoK0KAvbHeoVmI+10yeNZg=
+github.com/abema/crema v0.1.7 h1:mYXbhYDhVzWNolLoRk47i7pFEhqJsO/zDI8YQG2bv7U=
+github.com/abema/crema v0.1.7/go.mod h1:16fUBydoLB69oCMyfaZGJWoK0KAvbHeoVmI+10yeNZg=
 github.com/alicebob/miniredis/v2 v2.36.1 h1:Dvc5oAnNOr7BIfPn7tF269U8DvRW1dBG2D5n0WrfYMI=
 github.com/alicebob/miniredis/v2 v2.36.1/go.mod h1:TcL7YfarKPGDAthEtl5NBeHZfeUQj6OXMm/+iu5cLMM=
 github.com/google/go-cmp v0.7.0 h1:wk8382ETsv4JYUZwIsn6YpYiWiBsYLSJiTsyBybVuN8=

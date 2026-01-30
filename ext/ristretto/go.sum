@@ -1,5 +1,5 @@
-github.com/abema/crema v0.1.6 h1:607+JJELuWWjgW7XHWhyw8R2uHMLbnG3rJljxfv+vLA=
-github.com/abema/crema v0.1.6/go.mod h1:16fUBydoLB69oCMyfaZGJWoK0KAvbHeoVmI+10yeNZg=
+github.com/abema/crema v0.1.7 h1:mYXbhYDhVzWNolLoRk47i7pFEhqJsO/zDI8YQG2bv7U=
+github.com/abema/crema v0.1.7/go.mod h1:16fUBydoLB69oCMyfaZGJWoK0KAvbHeoVmI+10yeNZg=
 github.com/cespare/xxhash/v2 v2.1.1 h1:6MnRN8NT7+YBpUIWxHtefFZOKTAPgGjpQSxqLNn0+qY=
 github.com/cespare/xxhash/v2 v2.1.1/go.mod h1:VGX0DQ3Q6kWi7AoAeZDth3/j3BFtOZR5XLFGgcrjCOs=
 github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=
