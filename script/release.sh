@@ -39,6 +39,17 @@ create_tag() {
   git push origin "${tag}"
 }
 
+release_tag() {
+  local dir="$1"
+  local version="$2"
+  local latest="$3"
+  local tag="${dir}/${version}"
+  tag="${tag#./}"
+
+  echo "release tag ${tag}"
+  gh release create "${VERSION}" --generate-notes --latest="${latest}"
+}
+
 if [ $# -eq 0 ] || [ "$1" = "-h" ] || [ "$1" = "--help" ]; then
   usage
   exit 1
@@ -63,9 +74,9 @@ ensure_clean
 
 pushd "$(dirname "$0")/.." > /dev/null # enter root
 
-# Release core module
+# Create tag for core module
 echo ""
-echo "### release core module ###"
+echo "### create tag for core module ###"
 create_tag "." "${VERSION}"
 
 # Update submodules
@@ -90,6 +101,7 @@ echo "### release submodules ###"
 for dir in "${SUBMODULE_DIRS[@]}" ; do
   echo "release ${dir}"
   create_tag "${dir}" "${VERSION}"
+  release_tag "${dir}" "${VERSION}" "false"
 done
 
 echo "### update example references ###"
@@ -110,6 +122,7 @@ echo ""
 echo "Create GitHub Release..."
 
 gh release create "${VERSION}" --generate-notes
+release_tag "${dir}" "${VERSION}" "false"
 
 echo "Release ${VERSION} successflly."
 
