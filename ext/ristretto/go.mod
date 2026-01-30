@@ -2,7 +2,7 @@ module github.com/abema/crema/ext/ristretto
 
 go 1.24.0
 
-require github.com/abema/crema v0.1.7
+require github.com/abema/crema v0.1.8
 
 require github.com/dgraph-io/ristretto v0.2.0
 
