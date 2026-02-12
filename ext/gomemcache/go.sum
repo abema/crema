@@ -22,5 +22,7 @@ github.com/abema/crema v0.1.8 h1:I9nyKzFOH55M7jW6UMrTjaVyWiHeepaNV80OXHNmcS8=
 github.com/abema/crema v0.1.8/go.mod h1:16fUBydoLB69oCMyfaZGJWoK0KAvbHeoVmI+10yeNZg=
 github.com/abema/crema v0.1.9 h1:CCCBCIwZq93aOaq/lQLGlOz7y7l++yVfw2VISvWWYKM=
 github.com/abema/crema v0.1.9/go.mod h1:16fUBydoLB69oCMyfaZGJWoK0KAvbHeoVmI+10yeNZg=
+github.com/abema/crema v1.0.0 h1:eUctSEtTTIaTEZ1ycY84VXgl0MDJcd67EmUMYUJjtk4=
+github.com/abema/crema v1.0.0/go.mod h1:16fUBydoLB69oCMyfaZGJWoK0KAvbHeoVmI+10yeNZg=
 github.com/bradfitz/gomemcache v0.0.0-20250403215159-8d39553ac7cf h1:TqhNAT4zKbTdLa62d2HDBFdvgSbIGB3eJE8HqhgiL9I=
 github.com/bradfitz/gomemcache v0.0.0-20250403215159-8d39553ac7cf/go.mod h1:r5xuitiExdLAJ09PR7vBVENGvp4ZuTBeWTGtxuX3K+c=
