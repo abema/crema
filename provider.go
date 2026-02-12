@@ -18,6 +18,7 @@ type CacheProvider[S any] interface {
 
 // NoopCacheProvider is a cache provider that does nothing.
 // All Get calls return a cache miss, and Set/Delete calls are no-ops.
+// Useful for tests or when caching should be explicitly disabled.
 type NoopCacheProvider[S any] struct{}
 
 var _ CacheProvider[any] = (*NoopCacheProvider[any])(nil)
