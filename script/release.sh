@@ -30,6 +30,27 @@ ensure_clean() {
   fi
 }
 
+sync_main_with_release_origin() {
+  local current_branch
+  current_branch=$(git branch --show-current)
+
+  echo "sync local refs with release-origin"
+  git fetch release-origin --prune --prune-tags main '+refs/tags/*:refs/tags/*'
+
+  if ! git show-ref --verify --quiet refs/remotes/release-origin/main; then
+    echo "ERROR: release-origin/main not found"
+    exit 1
+  fi
+
+  if [ "${current_branch}" != "main" ]; then
+    echo "switch branch to main"
+    git checkout main
+  fi
+
+  echo "fast-forward main to release-origin/main"
+  git merge --ff-only release-origin/main
+}
+
 create_tag() {
   local dir="$1"
   local version="$2"
@@ -76,6 +97,7 @@ fi
 echo "Releasing version ${VERSION}..."
 
 ensure_clean
+sync_main_with_release_origin
 
 pushd "$(dirname "$0")/.." > /dev/null # enter root
 
