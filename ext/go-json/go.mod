@@ -4,4 +4,4 @@ go 1.22
 
 require github.com/abema/crema v1.0.1
 
-require github.com/goccy/go-json v0.10.5
+require github.com/goccy/go-json v0.10.6
