@@ -1,6 +1,6 @@
 module github.com/abema/crema/ext/ristretto
 
-go 1.24.0
+go 1.24.9
 
 require github.com/abema/crema v1.0.1
 

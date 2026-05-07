@@ -1,6 +1,6 @@
 module github.com/abema/crema/ext/golang-lru
 
-go 1.22
+go 1.24.9
 
 require github.com/abema/crema v1.0.1
 
