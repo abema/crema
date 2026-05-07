@@ -1,6 +1,6 @@
 module github.com/abema/crema/ext/gomemcache
 
-go 1.23
+go 1.24.9
 
 require (
 	github.com/abema/crema v1.0.1
