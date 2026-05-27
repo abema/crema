@@ -34,6 +34,60 @@ func TestJSONByteStringCodec_RoundTrip(t *testing.T) {
 	}
 }
 
+func TestNoopCacheStorageCodec_RoundTrip(t *testing.T) {
+	t.Parallel()
+
+	codec := NoopCacheStorageCodec[string]{}
+	input := CacheObject[string]{
+		Value:          "hello",
+		ExpireAtMillis: 1234,
+	}
+
+	encoded, err := codec.Encode(input)
+	if err != nil {
+		t.Fatalf("expected encode to succeed, got %v", err)
+	}
+	if encoded != input {
+		t.Fatalf("expected encoded value %+v, got %+v", input, encoded)
+	}
+
+	decoded, err := codec.Decode(encoded)
+	if err != nil {
+		t.Fatalf("expected decode to succeed, got %v", err)
+	}
+	if decoded != input {
+		t.Fatalf("expected decoded value %+v, got %+v", input, decoded)
+	}
+}
+
+func TestJSONByteStringCodec_DoesNotEscapeHTML(t *testing.T) {
+	t.Parallel()
+
+	codec := JSONByteStringCodec[string]{}
+	encoded, err := codec.Encode(CacheObject[string]{
+		Value:          "<tag>&",
+		ExpireAtMillis: 1234,
+	})
+	if err != nil {
+		t.Fatalf("expected encode to succeed, got %v", err)
+	}
+	if !bytes.Contains(encoded, []byte(`"<tag>&"`)) {
+		t.Fatalf("expected encoded JSON to preserve HTML characters, got %s", encoded)
+	}
+	if bytes.Contains(encoded, []byte(`\u003c`)) || bytes.Contains(encoded, []byte(`\u003e`)) || bytes.Contains(encoded, []byte(`\u0026`)) {
+		t.Fatalf("expected encoded JSON to not escape HTML characters, got %s", encoded)
+	}
+}
+
+func TestJSONByteStringCodec_CanReleaseBufferOnDecode(t *testing.T) {
+	t.Parallel()
+
+	codec := JSONByteStringCodec[int]{}
+	if !codec.CanReleaseBufferOnDecode() {
+		t.Fatal("expected JSON codec to allow buffer release on decode")
+	}
+}
+
 func TestJSONByteStringCodec_DecodeError(t *testing.T) {
 	t.Parallel()
 
@@ -93,6 +147,18 @@ func (emptyPayloadCodec) Decode(data []byte) (CacheObject[struct{}], error) {
 	return CacheObject[struct{}]{}, nil
 }
 
+var errEncodeFailed = errors.New("encode failed")
+
+type encodeErrorCodec struct{}
+
+func (encodeErrorCodec) Encode(value CacheObject[string]) ([]byte, error) {
+	return nil, errEncodeFailed
+}
+
+func (encodeErrorCodec) Decode(data []byte) (CacheObject[string], error) {
+	return CacheObject[string]{}, nil
+}
+
 func TestBinaryCompressionCodec_RoundTripCompressed(t *testing.T) {
 	t.Parallel()
 
@@ -101,6 +167,37 @@ func TestBinaryCompressionCodec_RoundTripCompressed(t *testing.T) {
 		Value:          "hello",
 		ExpireAtMillis: 1234,
 	}
+	encoded, err := codec.Encode(input)
+	if err != nil {
+		t.Fatalf("expected encode to succeed, got %v", err)
+	}
+	if encoded[0] != CompressionTypeIDZlib {
+		t.Fatalf("expected zlib compression prefix, got %v", encoded[0])
+	}
+
+	decoded, err := codec.Decode(encoded)
+	if err != nil {
+		t.Fatalf("expected decode to succeed, got %v", err)
+	}
+	if decoded != input {
+		t.Fatalf("expected decoded value %+v, got %+v", input, decoded)
+	}
+}
+
+func TestBinaryCompressionCodec_RoundTripCompressedAtThreshold(t *testing.T) {
+	t.Parallel()
+
+	inner := binaryCompressionTestCodec{}
+	input := CacheObject[string]{
+		Value:          "hello",
+		ExpireAtMillis: 1234,
+	}
+	innerBuf, err := inner.Encode(input)
+	if err != nil {
+		t.Fatalf("expected inner encode to succeed, got %v", err)
+	}
+	codec := NewBinaryCompressionCodec(inner, len(innerBuf))
+
 	encoded, err := codec.Encode(input)
 	if err != nil {
 		t.Fatalf("expected encode to succeed, got %v", err)
@@ -149,6 +246,42 @@ func TestBinaryCompressionCodec_RoundTripUncompressedUnderThreshold(t *testing.T
 	}
 }
 
+func TestBinaryCompressionCodec_RoundTripUncompressedWithNegativeThreshold(t *testing.T) {
+	t.Parallel()
+
+	codec := NewBinaryCompressionCodec(binaryCompressionTestCodec{}, -1)
+	input := CacheObject[string]{
+		Value:          strings.Repeat("a", DefaultCompressThresholdBytes),
+		ExpireAtMillis: 5678,
+	}
+
+	encoded, err := codec.Encode(input)
+	if err != nil {
+		t.Fatalf("expected encode to succeed, got %v", err)
+	}
+	if encoded[0] != CompressionTypeIDNone {
+		t.Fatalf("expected no compression prefix, got %v", encoded[0])
+	}
+
+	decoded, err := codec.Decode(encoded)
+	if err != nil {
+		t.Fatalf("expected decode to succeed, got %v", err)
+	}
+	if decoded != input {
+		t.Fatalf("expected decoded value %+v, got %+v", input, decoded)
+	}
+}
+
+func TestBinaryCompressionCodec_EncodeError(t *testing.T) {
+	t.Parallel()
+
+	codec := NewBinaryCompressionCodec(encodeErrorCodec{}, 0)
+	_, err := codec.Encode(CacheObject[string]{Value: "hello"})
+	if !errors.Is(err, errEncodeFailed) {
+		t.Fatalf("expected encode error, got %v", err)
+	}
+}
+
 func TestBinaryCompressionCodec_ZeroLengthInput(t *testing.T) {
 	t.Parallel()
 
@@ -186,6 +319,25 @@ func TestBinaryCompressionCodec_DecodeCorruptedPayload(t *testing.T) {
 	codec := NewBinaryCompressionCodec(binaryCompressionTestCodec{}, 1)
 	if _, err := codec.Decode([]byte{CompressionTypeIDZlib, 0x00, 0x01}); err == nil {
 		t.Fatal("expected decode error for corrupted payload, got nil")
+	}
+}
+
+func TestBinaryCompressionCodec_DecodeTruncatedPayload(t *testing.T) {
+	t.Parallel()
+
+	compressBuf := bytes.NewBuffer(nil)
+	if err := compressZlib(compressBuf, []byte("hello")); err != nil {
+		t.Fatalf("compressZlib() error = %v", err)
+	}
+	compressed := compressBuf.Bytes()
+	if len(compressed) < 2 {
+		t.Fatalf("expected compressed data to include zlib payload, got %v", compressed)
+	}
+
+	codec := NewBinaryCompressionCodec(binaryCompressionTestCodec{}, 1)
+	data := append([]byte{CompressionTypeIDZlib}, compressed[:len(compressed)-1]...)
+	if _, err := codec.Decode(data); err == nil {
+		t.Fatal("expected decode error for truncated payload, got nil")
 	}
 }
 
