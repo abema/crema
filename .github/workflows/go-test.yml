@@ -2,6 +2,7 @@ name: go-test
 
 permissions:
   contents: read
+  code-quality: write
 
 on:
   push:
@@ -37,4 +38,15 @@ jobs:
           go generate
           git diff --exit-code
       - name: Go test
-        run: go test -v -bench=. -benchtime=1x ./... $(find ./ext/ -type d -mindepth 1 -maxdepth 1 | sed 's|$|/...|' | paste -sd ' ' -)
+        run: |
+          go test -v -coverprofile=coverage.out ./... $(find ./ext/ -type d -mindepth 1 -maxdepth 1 | sed 's|$|/...|' | paste -sd ' ' -)
+          go tool cover -func=coverage.out
+      - name: Generate Cobertura coverage report
+        run: GOWORK=off go -C tools tool gocover-cobertura -path "$GITHUB_WORKSPACE" < coverage.out > coverage.xml
+      - name: Upload coverage report
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        uses: actions/upload-code-coverage@b51da2c3c1b23e04d2d6477cfc34350b1f5cd3e9 # v1
+        with:
+          file: coverage.xml
+          language: Go
+          label: code-coverage/go-test

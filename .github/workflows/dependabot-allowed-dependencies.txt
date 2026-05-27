@@ -10,5 +10,6 @@ github.com/abema/crema
 actions/checkout
 actions/cache
 actions/setup-go
+actions/upload-code-coverage
 actions/github-script
 dependabot/fetch-metadata
