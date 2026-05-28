@@ -3,7 +3,7 @@ module github.com/abema/crema/ext/valkey-go
 go 1.25.0
 
 require (
-	github.com/abema/crema v1.0.1
+	github.com/abema/crema v1.0.2
 	github.com/alicebob/miniredis/v2 v2.38.0
 	github.com/valkey-io/valkey-go v1.0.75
 )
