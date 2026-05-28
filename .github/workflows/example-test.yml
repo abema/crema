@@ -53,9 +53,11 @@ jobs:
 
   example-test-aggregate:
     name: example-test-aggregate
-    runs-on: ubuntu-latest
     needs: example-test
-    if: always()
+    if: ${{ always() && (contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    permissions: {}
     steps:
-      - name: Check matrix result
-        run: test "${{ needs.example-test.result }}" = "success"
+      - name: Status
+        run: exit 1
