@@ -17,20 +17,27 @@ env:
 jobs:
   go-test:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - go-version: "1.25"
+            coverage: true
+          - go-version: "1.26"
+            coverage: false
     steps:
       - uses: actions/checkout@0c366fd6a839edf440554fa01a7085ccba70ac98 # v4.3.1
       - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
         with:
-          go-version: "1.25"
+          go-version: ${{ matrix.go-version }}
           cache: false
       - uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
           path: |
             ~/.cache/go-build
             ~/go/pkg/mod
-          key: v1-${{ runner.os }}-go-test-${{ hashFiles('go.work.sum', '**/go.sum') }}
+          key: v1-${{ runner.os }}-go-test-${{ matrix.go-version }}-${{ hashFiles('go.work.sum', '**/go.sum') }}
           restore-keys: |
-            v1-${{ runner.os }}-go-test-
+            v1-${{ runner.os }}-go-test-${{ matrix.go-version }}-
       - name: setup-git
         run: git config --global url."https://github-actions:${{ secrets.GITHUB_TOKEN }}@github.com/abema/crema".insteadOf "https://github.com/abema/crema"
       - name: Go generate (root) and verify clean
@@ -38,15 +45,23 @@ jobs:
           go generate
           git diff --exit-code
       - name: Go test
+        id: test
         run: |
-          go test -v -coverprofile=coverage.out ./... $(find ./ext/ -type d -mindepth 1 -maxdepth 1 | sed 's|$|/...|' | paste -sd ' ' -)
-          go tool cover -func=coverage.out
+          if [ "${{ matrix.coverage }}" = "true" ]; then
+            echo "coverage=true" >> "$GITHUB_OUTPUT"
+            go test -v -coverprofile=coverage.out ./... $(find ./ext/ -type d -mindepth 1 -maxdepth 1 | sed 's|$|/...|' | paste -sd ' ' -)
+            go tool cover -func=coverage.out
+          else
+            echo "coverage=false" >> "$GITHUB_OUTPUT"
+            go test -v ./... $(find ./ext/ -type d -mindepth 1 -maxdepth 1 | sed 's|$|/...|' | paste -sd ' ' -)
+          fi
       - name: Generate Cobertura coverage report
+        if: steps.test.outputs.coverage == 'true'
         run: |
           GOWORK=off go -C tools build -mod=readonly -o "$RUNNER_TEMP/gocover-cobertura" github.com/boumenot/gocover-cobertura
           "$RUNNER_TEMP/gocover-cobertura" -path "$GITHUB_WORKSPACE" < coverage.out > coverage.xml
       - name: Upload coverage report
-        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        if: steps.test.outputs.coverage == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
         uses: actions/upload-code-coverage@b51da2c3c1b23e04d2d6477cfc34350b1f5cd3e9 # v1
         with:
           file: coverage.xml
