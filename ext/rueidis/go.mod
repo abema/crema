@@ -9,6 +9,8 @@ require (
 )
 
 require (
+	github.com/onsi/gomega v1.39.1 // indirect
 	github.com/yuin/gopher-lua v1.1.1 // indirect
-	golang.org/x/sys v0.39.0 // indirect
+	golang.org/x/net v0.53.0 // indirect
+	golang.org/x/sys v0.43.0 // indirect
 )
