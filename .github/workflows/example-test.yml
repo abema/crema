@@ -50,8 +50,8 @@ jobs:
       - name: Go test (example)
         run: go test ./example
 
-  example-test-required:
-    name: example-test
+  example-test-aggregate:
+    name: example-test-aggregate
     runs-on: ubuntu-latest
     needs: example-test
     if: always()

@@ -68,8 +68,8 @@ jobs:
           language: Go
           label: code-coverage/go-test
 
-  go-test-required:
-    name: go-test
+  go-test-aggregate:
+    name: go-test-aggregate
     runs-on: ubuntu-latest
     needs: go-test
     if: always()
