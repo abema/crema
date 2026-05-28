@@ -67,3 +67,12 @@ jobs:
           file: coverage.xml
           language: Go
           label: code-coverage/go-test
+
+  go-test-required:
+    name: go-test
+    runs-on: ubuntu-latest
+    needs: go-test
+    if: always()
+    steps:
+      - name: Check matrix result
+        run: test "${{ needs.go-test.result }}" = "success"

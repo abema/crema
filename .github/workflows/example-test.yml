@@ -49,3 +49,12 @@ jobs:
         run: git config --global url."https://github-actions:${{ secrets.GITHUB_TOKEN }}@github.com/abema/crema".insteadOf "https://github.com/abema/crema"
       - name: Go test (example)
         run: go test ./example
+
+  example-test-required:
+    name: example-test
+    runs-on: ubuntu-latest
+    needs: example-test
+    if: always()
+    steps:
+      - name: Check matrix result
+        run: test "${{ needs.example-test.result }}" = "success"
