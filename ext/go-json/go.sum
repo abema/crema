@@ -1,5 +1,3 @@
-github.com/abema/crema v1.0.1 h1:Iw5HiCa4dX7zIuuJv+lNSg+LKmE9P/FY2+J+bZku4UQ=
-github.com/abema/crema v1.0.1/go.mod h1:16fUBydoLB69oCMyfaZGJWoK0KAvbHeoVmI+10yeNZg=
 github.com/abema/crema v1.0.2 h1:vq8fact+LOlTeC77zNSlLME6VFnobvNRt/yasd9b1ZM=
 github.com/abema/crema v1.0.2/go.mod h1:2kfFKrRClqtGA8AEGExyGGcyo8W602YhYUhAwrSY1RU=
 github.com/goccy/go-json v0.10.6 h1:p8HrPJzOakx/mn/bQtjgNjdTcN+/S6FcG2CTtQOrHVU=
