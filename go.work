@@ -5,9 +5,9 @@ use (
 	./example
 	./ext/go-json
 	./ext/golang-lru
+	./ext/gomemcache
 	./ext/madvfree
 	./ext/madvfree/bench
-	./ext/gomemcache
 	./ext/protobuf
 	./ext/ristretto
 	./ext/rueidis

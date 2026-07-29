@@ -1,4 +1,6 @@
 github.com/abema/crema v1.0.2 h1:vq8fact+LOlTeC77zNSlLME6VFnobvNRt/yasd9b1ZM=
 github.com/abema/crema v1.0.2/go.mod h1:2kfFKrRClqtGA8AEGExyGGcyo8W602YhYUhAwrSY1RU=
+github.com/abema/crema v1.1.0 h1:zy4CzI9g/KJ8G+h245hzLh9NNEkaEybzcTnYjpptTFs=
+github.com/abema/crema v1.1.0/go.mod h1:2kfFKrRClqtGA8AEGExyGGcyo8W602YhYUhAwrSY1RU=
 github.com/hashicorp/golang-lru/v2 v2.0.7 h1:a+bsQ5rvGLjzHuww6tVxozPZFVghXaHOwFs4luLUK2k=
 github.com/hashicorp/golang-lru/v2 v2.0.7/go.mod h1:QeFd9opnmA6QUJc5vARoKUSoFhyfM2/ZepoAG6RGpeM=
