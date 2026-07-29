@@ -41,10 +41,6 @@ updates:
     schedule:
       interval: "daily"
   - package-ecosystem: "gomod"
-    directory: "/tools"
-    schedule:
-      interval: "daily"
-  - package-ecosystem: "gomod"
     directory: "/example"
     schedule:
       interval: "daily"
