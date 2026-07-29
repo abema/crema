@@ -1,4 +1,4 @@
-//go:build linux && !386 && !arm && !mips && !mipsle
+//go:build (linux && !386 && !arm && !mips && !mipsle) || darwin
 
 package madvfree
 
@@ -190,10 +190,7 @@ func forceReclaimForFuzz(
 		affectsTarget = true
 	}
 
-	if err := unix.Madvise(
-		provider.page(item.startPage+pageOffset),
-		unix.MADV_DONTNEED,
-	); err != nil {
+	if err := simulateReclaim(provider.page(item.startPage + pageOffset)); err != nil {
 		return false, false, err
 	}
 

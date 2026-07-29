@@ -1,12 +1,10 @@
-//go:build linux && !386 && !arm && !mips && !mipsle
+//go:build (linux && !386 && !arm && !mips && !mipsle) || darwin
 
 package madvfree
 
 import (
 	"encoding/binary"
 	"sync"
-
-	"golang.org/x/sys/unix"
 )
 
 type smallPageState uint8
@@ -69,8 +67,8 @@ func (p *Provider) allocateSmall(
 	}
 	layout := p.layouts[classID]
 
-	if item, allocated := p.allocateFromSmallPages(classID, layout, key, value, expiresAt); allocated {
-		return item, true, nil
+	if item, allocated, err := p.allocateFromSmallPages(classID, layout, key, value, expiresAt); allocated || err != nil {
+		return item, true, err
 	}
 
 	creation := &p.classCreate[classID]
@@ -78,8 +76,8 @@ func (p *Provider) allocateSmall(
 	defer creation.Unlock()
 
 	// Another Set may have created a slab while this goroutine waited.
-	if item, allocated := p.allocateFromSmallPages(classID, layout, key, value, expiresAt); allocated {
-		return item, true, nil
+	if item, allocated, err := p.allocateFromSmallPages(classID, layout, key, value, expiresAt); allocated || err != nil {
+		return item, true, err
 	}
 
 	p.allocatorMu.Lock()
@@ -95,7 +93,16 @@ func (p *Provider) allocateSmall(
 	meta := p.smallPageMetadata(pageID)
 	meta.mu.Lock()
 	generation := p.nextGeneration()
-	p.initializeSmallPageLocked(meta, pageID, classID, generation, layout)
+	if err := p.initializeSmallPageLocked(meta, pageID, classID, generation, layout); err != nil {
+		meta.mu.Unlock()
+		p.removeSmallPage(classID, smallPageRef{pageID: pageID, generation: generation, meta: meta})
+		p.allocatorMu.Lock()
+		p.allocator.release(pageID, layout.pageCount)
+		p.stats.reservedBytes.Add(-int64(layout.slabBytes()))
+		p.allocatorMu.Unlock()
+
+		return nil, true, err
+	}
 	item := p.writeSmallSlotLocked(meta, pageID, classID, layout, key, value, expiresAt)
 	meta.mu.Unlock()
 
@@ -116,7 +123,7 @@ func (p *Provider) allocateFromSmallPages(
 	key string,
 	value []byte,
 	expiresAt int64,
-) (*cacheEntry, bool) {
+) (*cacheEntry, bool, error) {
 	buffer := p.smallRefs.Get().(*smallPageRefBuffer)
 	p.smallMu.RLock()
 	buffer.references = append(buffer.references[:0], p.classPages[classID]...)
@@ -128,14 +135,14 @@ func (p *Provider) allocateFromSmallPages(
 	}()
 
 	for _, reference := range buffer.references {
-		item, stale, allocated := p.allocateSmallSlot(reference, classID, layout, key, value, expiresAt)
+		item, stale, allocated, err := p.allocateSmallSlot(reference, classID, layout, key, value, expiresAt)
 		p.cleanupStaleSmall(stale)
-		if allocated {
-			return item, true
+		if allocated || err != nil {
+			return item, allocated, err
 		}
 	}
 
-	return nil, false
+	return nil, false, nil
 }
 
 func (p *Provider) allocateSmallSlot(
@@ -145,7 +152,7 @@ func (p *Provider) allocateSmallSlot(
 	key string,
 	value []byte,
 	expiresAt int64,
-) (*cacheEntry, []*cacheEntry, bool) {
+) (*cacheEntry, []*cacheEntry, bool, error) {
 	meta := reference.meta
 	if meta == nil {
 		meta = p.smallPageMetadata(reference.pageID)
@@ -156,12 +163,17 @@ func (p *Provider) allocateSmallSlot(
 		meta.generation != reference.generation {
 		meta.mu.Unlock()
 
-		return nil, nil, false
+		return nil, nil, false, nil
 	}
 
 	var stale []*cacheEntry
 	if meta.refs == 0 {
-		validPages := p.touchAndValidateSmallSlabPages(reference.pageID, meta, layout)
+		validPages, err := p.touchAndValidateSmallSlabPages(reference.pageID, meta, layout)
+		if err != nil {
+			meta.mu.Unlock()
+
+			return nil, nil, false, err
+		}
 		invalidPages := layout.allPageMask() &^ validPages
 		if invalidPages != 0 {
 			stale = p.repairSmallSlabPagesLocked(meta, reference.pageID, layout, invalidPages)
@@ -170,17 +182,17 @@ func (p *Provider) allocateSmallSlot(
 
 	if meta.used >= layout.slotCount {
 		if meta.refs == 0 {
-			p.madviseSmallSlabLocked(reference.pageID, layout, unix.MADV_FREE)
+			p.markIdleSmallSlabLocked(reference.pageID, layout)
 		}
 		meta.mu.Unlock()
 
-		return nil, stale, false
+		return nil, stale, false, nil
 	}
 
 	item := p.writeSmallSlotLocked(meta, reference.pageID, classID, layout, key, value, expiresAt)
 	meta.mu.Unlock()
 
-	return item, stale, true
+	return item, stale, true, nil
 }
 
 func (p *Provider) initializeSmallPageLocked(
@@ -189,8 +201,13 @@ func (p *Provider) initializeSmallPageLocked(
 	classID uint16,
 	generation uint64,
 	layout smallPageLayout,
-) {
+) error {
 	slab := p.smallSlab(pageID, layout)
+	// Re-pin before writing: the pages may have been left reclaimable by a prior
+	// discard, so platforms that require it must re-charge them first.
+	if err := p.markActive(slab); err != nil {
+		return err
+	}
 	clear(slab)
 	for pageIndex := uint32(0); pageIndex < layout.pageCount; pageIndex++ {
 		page := p.page(pageID + pageIndex)
@@ -203,6 +220,8 @@ func (p *Provider) initializeSmallPageLocked(
 	meta.refs = 0
 	meta.used = 0
 	meta.entries = make([]*cacheEntry, layout.slotCount)
+
+	return nil
 }
 
 func (p *Provider) writeSmallSlotLocked(
@@ -268,35 +287,41 @@ func (p *Provider) touchAndValidateSmallSlab(
 	startPage uint32,
 	meta *smallPageMeta,
 	layout smallPageLayout,
-) bool {
-	return p.touchAndValidateSmallSlabPages(startPage, meta, layout) == layout.allPageMask()
+) (bool, error) {
+	validPages, err := p.touchAndValidateSmallSlabPages(startPage, meta, layout)
+
+	return validPages == layout.allPageMask(), err
 }
 
 func (p *Provider) touchAndValidateSmallSlabPages(
 	startPage uint32,
 	meta *smallPageMeta,
 	layout smallPageLayout,
-) uint32 {
+) (uint32, error) {
+	// Re-pin the whole slab, then read each page header. Reclaimed pages return
+	// zeroes, so their generation no longer matches meta.generation.
+	if err := p.markActive(p.smallSlab(startPage, layout)); err != nil {
+		return 0, err
+	}
 	var validPages uint32
 	for pageIndex := uint32(0); pageIndex < layout.pageCount; pageIndex++ {
 		page := p.page(startPage + pageIndex)
-		page[touchOffset] ^= 1
 		if binary.LittleEndian.Uint64(page[generationOffset:pageIndexOffset]) == meta.generation &&
 			binary.LittleEndian.Uint32(page[pageIndexOffset:touchOffset]) == pageIndex {
 			validPages |= uint32(1) << pageIndex
 		}
 	}
 
-	return validPages
+	return validPages, nil
 }
 
-//nolint:cyclop,funlen // Splitting this lock-consuming state transition would obscure ownership.
-func (p *Provider) acquireSmall(item *cacheEntry) (bool, bool) {
+//nolint:cyclop,funlen // Every metadata mismatch has different reclaim semantics.
+func (p *Provider) acquireSmall(item *cacheEntry) (bool, bool, error) {
 	item.mu.Lock()
 	if item.state != entryLive {
 		item.mu.Unlock()
 
-		return false, false
+		return false, false, nil
 	}
 	meta := item.smallMeta
 	meta.mu.Lock()
@@ -310,12 +335,18 @@ func (p *Provider) acquireSmall(item *cacheEntry) (bool, bool) {
 		item.mu.Unlock()
 		p.finalizeStaleSmall(item)
 
-		return false, false
+		return false, false, nil
 	}
 	var stale []*cacheEntry
 	reclaimed := false
 	if meta.refs == 0 {
-		validPages := p.touchAndValidateSmallSlabPages(item.startPage, meta, layout)
+		validPages, err := p.touchAndValidateSmallSlabPages(item.startPage, meta, layout)
+		if err != nil {
+			meta.mu.Unlock()
+			item.mu.Unlock()
+
+			return false, false, err
+		}
 		invalidPages := layout.allPageMask() &^ validPages
 		if invalidPages != 0 {
 			reclaimed = p.smallSlabPagesWereReclaimed(item.startPage, layout, invalidPages)
@@ -330,12 +361,12 @@ func (p *Provider) acquireSmall(item *cacheEntry) (bool, bool) {
 				meta.state = smallPageDead
 				meta.entries = nil
 				item.state = entryDead
-				p.madviseSmallSlabLocked(item.startPage, layout, unix.MADV_DONTNEED)
+				p.discardSmallSlabLocked(item.startPage, layout)
 				meta.mu.Unlock()
 				item.mu.Unlock()
 				p.releaseDiscardedSmallPage(classID, reference, stale)
 
-				return reclaimed, false
+				return reclaimed, false, nil
 			}
 		}
 	}
@@ -344,14 +375,14 @@ func (p *Provider) acquireSmall(item *cacheEntry) (bool, bool) {
 	if slot >= len(meta.entries) || meta.entries[slot] != item {
 		item.state = entryDead
 		if meta.refs == 0 {
-			p.madviseSmallSlabLocked(item.startPage, layout, unix.MADV_FREE)
+			p.markIdleSmallSlabLocked(item.startPage, layout)
 		}
 		meta.mu.Unlock()
 		item.mu.Unlock()
 		p.cleanupStaleSmall(stale)
 		p.finalizeStaleSmall(item)
 
-		return reclaimed, false
+		return reclaimed, false, nil
 	}
 	allocated, valid := layout.slotAllocated(slab, slot)
 	slotGeneration, generationValid := layout.slotGeneration(slab, slot)
@@ -364,14 +395,14 @@ func (p *Provider) acquireSmall(item *cacheEntry) (bool, bool) {
 		int(length) != item.length {
 		item.state = entryDead
 		if meta.refs == 0 {
-			p.madviseSmallSlabLocked(item.startPage, layout, unix.MADV_FREE)
+			p.markIdleSmallSlabLocked(item.startPage, layout)
 		}
 		meta.mu.Unlock()
 		item.mu.Unlock()
 		p.cleanupStaleSmall(stale)
 		p.finalizeStaleSmall(item)
 
-		return reclaimed, false
+		return reclaimed, false, nil
 	}
 
 	item.refs++
@@ -380,7 +411,7 @@ func (p *Provider) acquireSmall(item *cacheEntry) (bool, bool) {
 	item.mu.Unlock()
 	p.cleanupStaleSmall(stale)
 
-	return false, true
+	return false, true, nil
 }
 
 func (p *Provider) copyFromSmall(destination []byte, item *cacheEntry) {
@@ -407,7 +438,7 @@ func (p *Provider) releaseSmall(item *cacheEntry) {
 	}
 
 	if meta.refs == 0 {
-		p.madviseSmallSlabLocked(item.startPage, p.layouts[item.classID], unix.MADV_FREE)
+		p.markIdleSmallSlabLocked(item.startPage, p.layouts[item.classID])
 	}
 	meta.mu.Unlock()
 	item.mu.Unlock()
@@ -449,10 +480,13 @@ func (p *Provider) finalizeSmallLocked(item *cacheEntry, meta *smallPageMeta) {
 		meta.classID == item.classID &&
 		slot < len(meta.entries) &&
 		meta.entries[slot] == item
-	if slotMatches && meta.refs == 0 && !p.touchAndValidateSmallSlab(item.startPage, meta, layout) {
-		p.finalizeReclaimedSmallLocked(item, meta)
+	if slotMatches && meta.refs == 0 {
+		valid, err := p.touchAndValidateSmallSlab(item.startPage, meta, layout)
+		if err != nil || !valid {
+			p.finalizeReclaimedSmallLocked(item, meta)
 
-		return
+			return
+		}
 	}
 	if slotMatches {
 		allocated, valid := layout.slotAllocated(slab, slot)
@@ -471,9 +505,9 @@ func (p *Provider) finalizeSmallLocked(item *cacheEntry, meta *smallPageMeta) {
 	releasePage := meta.state == smallPageLive && meta.used == 0 && meta.refs == 0
 	if releasePage {
 		meta.state = smallPageDead
-		p.madviseSmallSlabLocked(item.startPage, layout, unix.MADV_DONTNEED)
+		p.discardSmallSlabLocked(item.startPage, layout)
 	} else if meta.state == smallPageLive && meta.refs == 0 {
-		p.madviseSmallSlabLocked(item.startPage, layout, unix.MADV_FREE)
+		p.markIdleSmallSlabLocked(item.startPage, layout)
 	}
 	pageID := item.startPage
 	classID := item.classID
@@ -486,10 +520,10 @@ func (p *Provider) finalizeSmallLocked(item *cacheEntry, meta *smallPageMeta) {
 	meta.mu.Unlock()
 	item.mu.Unlock()
 	if releasePage {
-		p.removeSmallPage(
-			classID,
-			smallPageRef{pageID: pageID, generation: pageGeneration, meta: meta},
-		)
+		// Drop the page from the index before returning it to the allocator, so a
+		// concurrent allocation cannot reuse pageID and re-register this meta
+		// between the two steps.
+		p.removeSmallPage(classID, smallPageRef{pageID: pageID, generation: pageGeneration, meta: meta})
 		p.allocatorMu.Lock()
 		p.allocator.release(pageID, layout.pageCount)
 		p.stats.reservedBytes.Add(-int64(layout.slabBytes()))
@@ -531,7 +565,7 @@ func (p *Provider) discardSmallPageLocked(
 	meta.used = 0
 	meta.entries = nil
 
-	p.madviseSmallSlabLocked(pageID, layout, unix.MADV_DONTNEED)
+	p.discardSmallSlabLocked(pageID, layout)
 
 	return stale
 }
@@ -598,8 +632,12 @@ func (p *Provider) removeSmallPage(
 	p.smallMu.Unlock()
 }
 
-func (p *Provider) madviseSmallSlabLocked(pageID uint32, layout smallPageLayout, advice int) {
-	p.advise(p.smallSlab(pageID, layout), advice)
+func (p *Provider) markIdleSmallSlabLocked(pageID uint32, layout smallPageLayout) {
+	p.markIdle(p.smallSlab(pageID, layout))
+}
+
+func (p *Provider) discardSmallSlabLocked(pageID uint32, layout smallPageLayout) {
+	p.discard(p.smallSlab(pageID, layout))
 }
 
 func (p *Provider) smallSlab(pageID uint32, layout smallPageLayout) []byte {
@@ -641,7 +679,9 @@ func (p *Provider) smallSlabPagesWereReclaimed(
 // their payload overlaps a reclaimed or otherwise invalid physical page.
 //
 // The caller must hold meta.mu and must have established meta.refs == 0.
-func (p *Provider) repairSmallSlabPagesLocked( //nolint:cyclop // Each metadata repair branch preserves a distinct slot invariant.
+//
+//nolint:cyclop // Reclaim repair invalidates entries and rebuilds headers in one pass.
+func (p *Provider) repairSmallSlabPagesLocked(
 	meta *smallPageMeta,
 	pageID uint32,
 	layout smallPageLayout,

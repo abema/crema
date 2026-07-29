@@ -1,4 +1,4 @@
-//go:build linux && !386 && !arm && !mips && !mipsle
+//go:build (linux && !386 && !arm && !mips && !mipsle) || darwin
 
 package madvfree
 
@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/abema/crema"
-	"golang.org/x/sys/unix"
 )
 
 const (
@@ -70,30 +69,36 @@ type counters struct {
 	logicalBytes  atomic.Int64
 	reservedBytes atomic.Int64
 
-	hits               atomic.Uint64
-	misses             atomic.Uint64
-	reclaimedMisses    atomic.Uint64
-	generationMisses   atomic.Uint64
-	expiredMisses      atomic.Uint64
-	madvFreeCalls      atomic.Uint64
-	madvDontNeedCalls  atomic.Uint64
-	madvFreeErrors     atomic.Uint64
-	madvDontNeedErrors atomic.Uint64
-	allocations        atomic.Uint64
-	allocationFails    atomic.Uint64
-	smallAllocations   atomic.Uint64
-	extentAllocations  atomic.Uint64
+	hits             atomic.Uint64
+	misses           atomic.Uint64
+	reclaimedMisses  atomic.Uint64
+	generationMisses atomic.Uint64
+	expiredMisses    atomic.Uint64
+
+	idleCalls        atomic.Uint64
+	idleErrors       atomic.Uint64
+	reactivateCalls  atomic.Uint64
+	reactivateErrors atomic.Uint64
+	discardCalls     atomic.Uint64
+	discardErrors    atomic.Uint64
+
+	allocations       atomic.Uint64
+	allocationFails   atomic.Uint64
+	smallAllocations  atomic.Uint64
+	extentAllocations atomic.Uint64
 }
 
 // Provider is a concurrent, best-effort byte cache backed by a single
 // anonymous mmap arena.
 //
-// Idle extents are marked MADV_FREE, so Linux may discard them under memory
-// pressure. Get therefore may miss before an entry's TTL expires.
+// Idle allocations are marked reclaimable through the platform memoryBackend, so
+// the kernel may discard them under memory pressure. Get therefore may miss
+// before an entry's TTL expires.
 type Provider struct {
 	lifecycle sync.RWMutex
 	closed    bool
 
+	backend    memoryBackend
 	arena      []byte
 	pageSize   int
 	capacity   int
@@ -110,7 +115,6 @@ type Provider struct {
 	classCreate []sync.Mutex
 	smallRefs   sync.Pool
 	layouts     []smallPageLayout
-	madvise     madviseFunc
 
 	expiryMu    sync.Mutex
 	expirations expiryHeap
@@ -123,23 +127,29 @@ type Provider struct {
 
 var _ crema.CacheProvider[[]byte] = (*Provider)(nil)
 
-// NewProvider creates a Linux anonymous-mmap cache.
+// NewProvider creates an anonymous-mmap cache for the running platform.
 //
-// The zero-value Config is valid. Initialization probes MADV_FREE and applies
-// the configured arena advice before starting the TTL worker. The caller must
-// call Close when the provider is no longer needed.
+// The zero-value Config is valid. Initialization probes the platform's lazy-free
+// mechanism and applies the configured arena advice before starting the TTL
+// worker. The caller must call Close when the provider is no longer needed. On
+// unsupported platforms NewProvider returns an error wrapping ErrUnsupported.
 //
-//nolint:cyclop,funlen // Initialization keeps all mmap cleanup paths together.
+//nolint:cyclop,funlen // Initialization keeps backend setup and cleanup paths together.
 func NewProvider(config Config) (*Provider, error) {
 	if config.CapacityBytes < 0 || config.ShardCount < 0 {
 		return nil, fmt.Errorf("%w: capacity and shard count must be non-negative", ErrInvalidConfig)
+	}
+
+	backend, err := newBackend(config)
+	if err != nil {
+		return nil, err
 	}
 
 	capacityBytes := config.CapacityBytes
 	if capacityBytes == 0 {
 		capacityBytes = DefaultCapacityBytes
 	}
-	pageSize := unix.Getpagesize()
+	pageSize := backend.pageSize()
 	capacity, ok := roundUp(capacityBytes, pageSize)
 	if !ok || capacity < pageSize {
 		return nil, fmt.Errorf("%w: capacity overflows int", ErrInvalidConfig)
@@ -155,37 +165,10 @@ func NewProvider(config Config) (*Provider, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := probeMADVFree(pageSize); err != nil {
-		return nil, err
-	}
 
-	arena, err := unix.Mmap(
-		-1,
-		0,
-		capacity,
-		unix.PROT_READ|unix.PROT_WRITE,
-		unix.MAP_PRIVATE|unix.MAP_ANONYMOUS|unix.MAP_NORESERVE,
-	)
+	arena, err := backend.mapArena(capacity)
 	if err != nil {
-		return nil, fmt.Errorf("madvfree: mmap: %w", err)
-	}
-	cleanup := func(cause error) (*Provider, error) {
-		if unmapErr := unix.Munmap(arena); unmapErr != nil {
-			return nil, errors.Join(cause, fmt.Errorf("madvfree: munmap after initialization failure: %w", unmapErr))
-		}
-
-		return nil, cause
-	}
-
-	if !config.EnableHugePages {
-		if err := unix.Madvise(arena, unix.MADV_NOHUGEPAGE); err != nil {
-			return cleanup(fmt.Errorf("madvfree: MADV_NOHUGEPAGE: %w", err))
-		}
-	}
-	if !config.IncludeInCoreDump {
-		if err := unix.Madvise(arena, unix.MADV_DONTDUMP); err != nil {
-			return cleanup(fmt.Errorf("madvfree: MADV_DONTDUMP: %w", err))
-		}
+		return nil, err
 	}
 
 	shards := make([]indexShard, shardCount)
@@ -195,6 +178,7 @@ func NewProvider(config Config) (*Provider, error) {
 	pageCount := uint32(capacity / pageSize)
 
 	provider := &Provider{
+		backend:     backend,
 		arena:       arena,
 		pageSize:    pageSize,
 		capacity:    capacity,
@@ -210,7 +194,6 @@ func NewProvider(config Config) (*Provider, error) {
 			},
 		},
 		layouts:    layouts,
-		madvise:    unix.Madvise,
 		expiryWake: make(chan struct{}, 1),
 		expiryStop: make(chan struct{}),
 		expiryDone: make(chan struct{}),
@@ -224,6 +207,8 @@ func NewProvider(config Config) (*Provider, error) {
 //
 // It returns (nil, false, nil) for an absent, expired, or reclaimed entry.
 // Cancellation of ctx and use after Close are returned as errors.
+//
+//nolint:cyclop // Miss classification and reactivation errors require distinct outcomes.
 func (p *Provider) Get(ctx context.Context, key string) ([]byte, bool, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, false, err
@@ -250,7 +235,10 @@ func (p *Provider) Get(ctx context.Context, key string) ([]byte, bool, error) {
 		return nil, false, nil
 	}
 
-	reclaimed, acquired := p.acquire(item)
+	reclaimed, acquired, err := p.acquire(item)
+	if err != nil {
+		return nil, false, err
+	}
 	if !acquired {
 		p.removeIfSame(key, item)
 		p.finalize(item)
@@ -345,11 +333,23 @@ func (p *Provider) Set(ctx context.Context, key string, value []byte, ttl time.D
 			generation: p.nextGeneration(),
 			expiresAt:  expiresAt,
 		}
+		region := p.extentBytes(item.startPage, item.pageCount)
+		if err := p.markActive(region); err != nil {
+			p.allocatorMu.Lock()
+			p.allocator.release(startPage, pageCount)
+			p.stats.entries.Add(-1)
+			p.stats.logicalBytes.Add(-int64(len(value)))
+			p.stats.reservedBytes.Add(-int64(pageCount) * int64(p.pageSize))
+			p.allocatorMu.Unlock()
+			p.stats.allocationFails.Add(1)
+
+			return err
+		}
 		p.writeExtent(item, value)
 		p.stats.allocations.Add(1)
 		p.stats.extentAllocations.Add(1)
 
-		p.madviseExtent(item, unix.MADV_FREE)
+		p.markIdle(region)
 	}
 
 	old := p.replace(key, item)
@@ -459,8 +459,8 @@ func (p *Provider) Close() error {
 		shard.mu.Unlock()
 	}
 	var result error
-	p.advise(p.arena, unix.MADV_DONTNEED)
-	if err := unix.Munmap(p.arena); err != nil {
+	p.discard(p.arena)
+	if err := p.backend.unmap(p.arena); err != nil {
 		result = errors.Join(result, fmt.Errorf("madvfree: munmap: %w", err))
 	} else {
 		p.arena = nil
@@ -487,27 +487,29 @@ func (p *Provider) Stats() Stats {
 	p.allocatorMu.Unlock()
 
 	return Stats{
-		Entries:            entries,
-		LogicalBytes:       logicalBytes,
-		ReservedBytes:      reservedBytes,
-		FreeBytes:          freeBytes,
-		Hits:               p.stats.hits.Load(),
-		Misses:             p.stats.misses.Load(),
-		ReclaimedMisses:    p.stats.reclaimedMisses.Load(),
-		GenerationMisses:   p.stats.generationMisses.Load(),
-		ExpiredMisses:      p.stats.expiredMisses.Load(),
-		MadvFreeCalls:      p.stats.madvFreeCalls.Load(),
-		MadvDontNeedCalls:  p.stats.madvDontNeedCalls.Load(),
-		MadvFreeErrors:     p.stats.madvFreeErrors.Load(),
-		MadvDontNeedErrors: p.stats.madvDontNeedErrors.Load(),
-		Allocations:        p.stats.allocations.Load(),
-		AllocationFails:    p.stats.allocationFails.Load(),
-		SmallAllocations:   p.stats.smallAllocations.Load(),
-		ExtentAllocations:  p.stats.extentAllocations.Load(),
+		Entries:           entries,
+		LogicalBytes:      logicalBytes,
+		ReservedBytes:     reservedBytes,
+		FreeBytes:         freeBytes,
+		Hits:              p.stats.hits.Load(),
+		Misses:            p.stats.misses.Load(),
+		ReclaimedMisses:   p.stats.reclaimedMisses.Load(),
+		GenerationMisses:  p.stats.generationMisses.Load(),
+		ExpiredMisses:     p.stats.expiredMisses.Load(),
+		IdleCalls:         p.stats.idleCalls.Load(),
+		IdleErrors:        p.stats.idleErrors.Load(),
+		ReactivateCalls:   p.stats.reactivateCalls.Load(),
+		ReactivateErrors:  p.stats.reactivateErrors.Load(),
+		DiscardCalls:      p.stats.discardCalls.Load(),
+		DiscardErrors:     p.stats.discardErrors.Load(),
+		Allocations:       p.stats.allocations.Load(),
+		AllocationFails:   p.stats.allocationFails.Load(),
+		SmallAllocations:  p.stats.smallAllocations.Load(),
+		ExtentAllocations: p.stats.extentAllocations.Load(),
 	}
 }
 
-func (p *Provider) acquire(item *cacheEntry) (bool, bool) {
+func (p *Provider) acquire(item *cacheEntry) (bool, bool, error) {
 	if item.kind == allocationSmall {
 		return p.acquireSmall(item)
 	}
@@ -515,33 +517,36 @@ func (p *Provider) acquire(item *cacheEntry) (bool, bool) {
 	return p.acquireExtent(item)
 }
 
-func (p *Provider) acquireExtent(item *cacheEntry) (bool, bool) {
+func (p *Provider) acquireExtent(item *cacheEntry) (bool, bool, error) {
 	item.mu.Lock()
 	defer item.mu.Unlock()
 	if item.state != entryLive {
-		return false, false
+		return false, false, nil
 	}
 	if item.refs == 0 {
+		// Re-pin the whole extent before validating: a mismatch on a later page
+		// can occur after earlier pages were re-pinned. The failed acquire
+		// retires the whole extent, whose discard makes that transient re-pin
+		// harmless.
+		if err := p.markActive(p.extentBytes(item.startPage, item.pageCount)); err != nil {
+			return false, false, err
+		}
 		reclaimed := false
-		// A mismatch on a later page can occur after earlier pages were touched
-		// and re-pinned. The failed acquire retires the whole extent, whose
-		// MADV_DONTNEED makes that transient re-pin harmless.
 		for pageIndex := uint32(0); pageIndex < item.pageCount; pageIndex++ {
 			page := p.page(item.startPage + pageIndex)
-			page[touchOffset] ^= 1
 			generation := binary.LittleEndian.Uint64(page[generationOffset:pageIndexOffset])
 			storedIndex := binary.LittleEndian.Uint32(page[pageIndexOffset:touchOffset])
 			if generation != item.generation || storedIndex != pageIndex {
 				reclaimed = reclaimed || generation == 0
 				item.state = entryDead
 
-				return reclaimed, false
+				return reclaimed, false, nil
 			}
 		}
 	}
 	item.refs++
 
-	return false, true
+	return false, true, nil
 }
 
 func (p *Provider) release(item *cacheEntry) {
@@ -572,7 +577,7 @@ func (p *Provider) releaseExtent(item *cacheEntry) {
 
 		return
 	}
-	p.madviseExtentLocked(item, unix.MADV_FREE)
+	p.markIdle(p.extentBytes(item.startPage, item.pageCount))
 	item.mu.Unlock()
 }
 
@@ -617,25 +622,15 @@ func (p *Provider) finalizeExtent(item *cacheEntry) {
 	}
 	item.freed = true
 	item.state = entryDead
-	p.madviseExtentLocked(item, unix.MADV_DONTNEED)
+	p.discard(p.extentBytes(item.startPage, item.pageCount))
 	item.mu.Unlock()
 
 	p.allocatorMu.Lock()
 	p.allocator.release(item.startPage, item.pageCount)
+	p.stats.reservedBytes.Add(-int64(item.pageCount) * int64(p.pageSize))
 	p.stats.entries.Add(-1)
 	p.stats.logicalBytes.Add(-int64(item.length))
-	p.stats.reservedBytes.Add(-int64(item.pageCount) * int64(p.pageSize))
 	p.allocatorMu.Unlock()
-}
-
-func (p *Provider) madviseExtent(item *cacheEntry, advice int) {
-	item.mu.Lock()
-	p.madviseExtentLocked(item, advice)
-	item.mu.Unlock()
-}
-
-func (p *Provider) madviseExtentLocked(item *cacheEntry, advice int) {
-	p.advise(p.extentBytes(item.startPage, item.pageCount), advice)
 }
 
 func (p *Provider) writeExtent(item *cacheEntry, value []byte) {

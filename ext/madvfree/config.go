@@ -26,7 +26,7 @@ type Config struct {
 	// DefaultCapacityBytes. It is rounded up to the host page size. This is
 	// logical allocator capacity, not resident memory. Environments with a
 	// strict overcommit policy or a low RLIMIT_AS may need a smaller explicit
-	// value because even a MAP_NORESERVE mapping can fail with ENOMEM.
+	// value because a lazily backed mapping can still fail with ENOMEM.
 	CapacityBytes int
 	// SizeClasses controls fixed-size slots used for values that fit in one
 	// size-class slab. Nil selects defaults through 32 KiB. An empty slice
@@ -36,9 +36,11 @@ type Config struct {
 	// ShardCount is the number of independently locked key-index shards.
 	// Zero selects 64.
 	ShardCount int
-	// EnableHugePages skips the default MADV_NOHUGEPAGE advice.
+	// EnableHugePages skips the default MADV_NOHUGEPAGE advice on Linux.
+	// It has no effect on macOS.
 	EnableHugePages bool
-	// IncludeInCoreDump skips the default MADV_DONTDUMP advice.
+	// IncludeInCoreDump skips the default MADV_DONTDUMP advice on Linux.
+	// It has no effect on macOS.
 	IncludeInCoreDump bool
 }
 
@@ -72,13 +74,20 @@ type Stats struct {
 	// ExpiredMisses is the number of Get misses caused by TTL expiration.
 	ExpiredMisses uint64
 
-	// MadvFreeCalls and MadvDontNeedCalls count runtime advice attempts. They do
-	// not include the initialization probe.
-	MadvFreeCalls     uint64
-	MadvDontNeedCalls uint64
-	// MadvFreeErrors and MadvDontNeedErrors count soft runtime advice failures.
-	MadvFreeErrors     uint64
-	MadvDontNeedErrors uint64
+	// IdleCalls counts regions marked reclaimable (Linux MADV_FREE, Darwin
+	// MADV_FREE_REUSABLE). ReactivateCalls counts regions re-pinned before use
+	// (a page write on Linux, MADV_FREE_REUSE on Darwin). DiscardCalls counts
+	// regions released (Linux MADV_DONTNEED, Darwin MADV_FREE_REUSABLE). None
+	// include the initialization probe.
+	IdleCalls       uint64
+	ReactivateCalls uint64
+	DiscardCalls    uint64
+	// IdleErrors, ReactivateErrors, and DiscardErrors count runtime advice
+	// failures for the corresponding operation. Idle and discard failures are
+	// soft; a reactivation failure aborts the current Get or Set.
+	IdleErrors       uint64
+	ReactivateErrors uint64
+	DiscardErrors    uint64
 
 	// Allocations counts successful slab-slot and extent allocations.
 	Allocations uint64

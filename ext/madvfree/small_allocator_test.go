@@ -1,4 +1,4 @@
-//go:build linux && !386 && !arm && !mips && !mipsle
+//go:build (linux && !386 && !arm && !mips && !mipsle) || darwin
 
 package madvfree
 
@@ -93,7 +93,7 @@ func TestSmallAllocatorReleasedMetadataRejectsStaleReference(t *testing.T) {
 	if !ok {
 		t.Fatal("value has no small class")
 	}
-	item, stale, allocated := provider.allocateSmallSlot(
+	item, stale, allocated, err := provider.allocateSmallSlot(
 		oldReference,
 		classID,
 		provider.layouts[classID],
@@ -101,6 +101,9 @@ func TestSmallAllocatorReleasedMetadataRejectsStaleReference(t *testing.T) {
 		value,
 		0,
 	)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if item != nil || len(stale) != 0 || allocated {
 		t.Fatalf("stale allocation = (%#v, %d, %v), want rejected", item, len(stale), allocated)
 	}
@@ -112,6 +115,7 @@ func TestSmallAllocatorReleasedMetadataRejectsStaleReference(t *testing.T) {
 }
 
 func TestSmallAllocatorCoordinatesConcurrentSlabCreation(t *testing.T) {
+	skipUnless4KiBPages(t)
 	provider := newTestProvider(t, 64)
 	ctx := context.Background()
 	layout := provider.layouts[0]
@@ -156,6 +160,7 @@ func TestSmallAllocatorCoordinatesConcurrentSlabCreation(t *testing.T) {
 }
 
 func TestSmallAllocatorSnapshotBufferIsReused(t *testing.T) {
+	skipUnless4KiBPages(t)
 	provider := newTestProvider(t, 4)
 	ctx := context.Background()
 	value := []byte("value")
@@ -185,7 +190,7 @@ func TestSmallAllocatorReclaimInvalidatesWholePage(t *testing.T) {
 	if item == nil || item.kind != allocationSmall {
 		t.Fatal("small entry was not indexed")
 	}
-	if err := unix.Madvise(provider.page(item.startPage), unix.MADV_DONTNEED); err != nil {
+	if err := simulateReclaim(provider.page(item.startPage)); err != nil {
 		t.Fatal(err)
 	}
 
@@ -209,17 +214,13 @@ func TestSmallAllocatorReclaimInvalidatesWholePage(t *testing.T) {
 
 func TestMultiPageSlabPacksSixKiBValues(t *testing.T) {
 	provider := newTestProvider(t, 64)
-	classID, ok := provider.smallClass(6 << 10)
-	if !ok {
-		t.Fatal("6 KiB value has no size class")
-	}
-	layout := provider.layouts[classID]
+	size, layout := multiPageValueSize(t, provider)
 	if layout.pageCount <= 1 || layout.slotCount < 2 {
-		t.Fatalf("6 KiB layout is not multi-page packed: %#v", layout)
+		t.Fatalf("layout is not multi-page packed: %#v", layout)
 	}
-	extentPages, ok := provider.pagesForValue(6 << 10)
+	extentPages, ok := provider.pagesForValue(size)
 	if !ok {
-		t.Fatal("6 KiB extent does not fit")
+		t.Fatal("multi-page extent does not fit")
 	}
 	if layout.slabBytes()/layout.slotCount >= int(extentPages)*provider.pageSize {
 		t.Fatalf(
@@ -230,7 +231,7 @@ func TestMultiPageSlabPacksSixKiBValues(t *testing.T) {
 		)
 	}
 
-	value := bytes.Repeat([]byte{0xa5}, 6<<10)
+	value := bytes.Repeat([]byte{0xa5}, size)
 	for slot := 0; slot < layout.slotCount; slot++ {
 		key := fmt.Sprintf("medium-%d", slot)
 		if err := provider.Set(context.Background(), key, value, 0); err != nil {
@@ -256,17 +257,13 @@ func TestMultiPageSlabPacksSixKiBValues(t *testing.T) {
 //nolint:gocyclo // One scenario verifies all affected and unaffected slot outcomes.
 func TestMultiPageSlabPartialReclaimPreservesUnaffectedSlots(t *testing.T) {
 	provider := newTestProvider(t, 64)
-	classID, ok := provider.smallClass(6 << 10)
-	if !ok {
-		t.Fatal("6 KiB value has no size class")
-	}
-	layout := provider.layouts[classID]
+	size, layout := multiPageValueSize(t, provider)
 	keys := make([]string, layout.slotCount)
 	values := make([][]byte, layout.slotCount)
 	items := make([]*cacheEntry, layout.slotCount)
 	for slot := 0; slot < layout.slotCount; slot++ {
 		key := fmt.Sprintf("medium-%d", slot)
-		value := bytes.Repeat([]byte{byte(slot + 1)}, 6<<10)
+		value := bytes.Repeat([]byte{byte(slot + 1)}, size)
 		keys[slot] = key
 		values[slot] = value
 		if err := provider.Set(context.Background(), key, value, 0); err != nil {
@@ -307,10 +304,7 @@ func TestMultiPageSlabPartialReclaimPreservesUnaffectedSlots(t *testing.T) {
 		t.Fatalf("layout has no page that isolates target payload: %#v", layout)
 	}
 	reclaimedMask := uint32(1) << reclaimedOffset
-	if err := unix.Madvise(
-		provider.page(target.startPage+reclaimedOffset),
-		unix.MADV_DONTNEED,
-	); err != nil {
+	if err := simulateReclaim(provider.page(target.startPage + reclaimedOffset)); err != nil {
 		t.Fatal(err)
 	}
 
@@ -351,7 +345,7 @@ func TestMultiPageSlabPartialReclaimPreservesUnaffectedSlots(t *testing.T) {
 	}
 
 	replacementKey := "replacement"
-	replacementValue := bytes.Repeat([]byte{0x7f}, 6<<10)
+	replacementValue := bytes.Repeat([]byte{0x7f}, size)
 	if err := provider.Set(context.Background(), replacementKey, replacementValue, 0); err != nil {
 		t.Fatal(err)
 	}
@@ -373,12 +367,8 @@ func TestMultiPageSlabPartialReclaimPreservesUnaffectedSlots(t *testing.T) {
 
 func TestMultiPageSlabAllocationRepairsPartialReclaim(t *testing.T) {
 	provider := newTestProvider(t, 64)
-	value := bytes.Repeat([]byte{0x5a}, 6<<10)
-	classID, ok := provider.smallClass(len(value))
-	if !ok {
-		t.Fatal("6 KiB value has no size class")
-	}
-	layout := provider.layouts[classID]
+	size, layout := multiPageValueSize(t, provider)
+	value := bytes.Repeat([]byte{0x5a}, size)
 	items := make([]*cacheEntry, layout.slotCount)
 	for slot := range layout.slotCount {
 		key := fmt.Sprintf("old-%d", slot)
@@ -414,10 +404,7 @@ func TestMultiPageSlabAllocationRepairsPartialReclaim(t *testing.T) {
 		t.Fatalf("layout has no page that isolates target payload: %#v", layout)
 	}
 	reclaimedMask := uint32(1) << reclaimedOffset
-	if err := unix.Madvise(
-		provider.page(items[0].startPage+reclaimedOffset),
-		unix.MADV_DONTNEED,
-	); err != nil {
+	if err := simulateReclaim(provider.page(items[0].startPage + reclaimedOffset)); err != nil {
 		t.Fatal(err)
 	}
 
@@ -458,6 +445,7 @@ func TestMultiPageSlabAllocationRepairsPartialReclaim(t *testing.T) {
 }
 
 func TestMultiPageSlabFallsBackToExtent(t *testing.T) {
+	skipUnless4KiBPages(t)
 	pageSize := unix.Getpagesize()
 	provider, err := NewProvider(Config{CapacityBytes: pageSize * 2})
 	if err != nil {
@@ -480,6 +468,7 @@ func TestMultiPageSlabFallsBackToExtent(t *testing.T) {
 }
 
 func TestMultiPageSlabAvoidsInefficientClassRounding(t *testing.T) {
+	skipUnless4KiBPages(t)
 	provider := newTestProvider(t, 16)
 	value := bytes.Repeat([]byte{0xa5}, 7<<10)
 	if err := provider.Set(context.Background(), "key", value, 0); err != nil {
@@ -515,7 +504,7 @@ func TestMultiPageSlabTTLAndActiveReader(t *testing.T) {
 	if stats.Entries != 1 || stats.ReservedBytes != int64(layout.slabBytes()) {
 		t.Fatalf("Stats() after medium TTL expiration = %+v", stats)
 	}
-	if _, acquired := provider.acquireSmall(keeper); !acquired {
+	if _, acquired, err := provider.acquireSmall(keeper); err != nil || !acquired {
 		t.Fatal("acquireSmall() failed")
 	}
 	if err := provider.Delete(context.Background(), "keeper"); err != nil {
@@ -603,7 +592,7 @@ func TestSmallAllocatorDeleteWaitsForReader(t *testing.T) {
 		t.Fatal(err)
 	}
 	item := provider.lookup("key")
-	if _, ok := provider.acquireSmall(item); !ok {
+	if _, ok, err := provider.acquireSmall(item); err != nil || !ok {
 		t.Fatal("acquireSmall() failed")
 	}
 	if err := provider.Delete(context.Background(), "key"); err != nil {

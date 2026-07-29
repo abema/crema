@@ -1,4 +1,4 @@
-//go:build !linux || (linux && (386 || arm || mips || mipsle))
+//go:build !darwin && (!linux || 386 || arm || mips || mipsle)
 
 package madvfree
 
@@ -7,10 +7,11 @@ import (
 	"time"
 )
 
-// Provider is unavailable on this platform.
+// Provider is unavailable on this platform. The cache requires 64-bit Linux or
+// macOS.
 type Provider struct{}
 
-// NewProvider returns ErrUnsupported on non-Linux and 32-bit platforms.
+// NewProvider returns ErrUnsupported on unsupported platforms.
 func NewProvider(Config) (*Provider, error) {
 	return nil, ErrUnsupported
 }

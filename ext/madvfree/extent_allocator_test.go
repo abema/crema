@@ -1,3 +1,5 @@
+//go:build (linux && !386 && !arm && !mips && !mipsle) || darwin
+
 package madvfree
 
 import "testing"
