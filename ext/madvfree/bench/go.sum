@@ -1,5 +1,4 @@
-github.com/abema/crema v1.0.2 h1:vq8fact+LOlTeC77zNSlLME6VFnobvNRt/yasd9b1ZM=
-github.com/abema/crema v1.0.2/go.mod h1:2kfFKrRClqtGA8AEGExyGGcyo8W602YhYUhAwrSY1RU=
+github.com/abema/crema v1.1.1 h1:mGvlyqHiVDtQjS614JVUNYVxNiVcyZvYbj839cDtZEQ=
 github.com/abema/crema/ext/ristretto v1.0.2 h1:teGmngLLToozXuaGmYwAT4sMBI+oKSrigqRWS+vd8iU=
 github.com/abema/crema/ext/ristretto v1.0.2/go.mod h1:mwizZBw2KkC/jUY4AoCK8wGNGoIwBuNB7Iq9YMUUhj4=
 github.com/cespare/xxhash/v2 v2.1.1 h1:6MnRN8NT7+YBpUIWxHtefFZOKTAPgGjpQSxqLNn0+qY=

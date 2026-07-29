@@ -1,5 +1,5 @@
-github.com/abema/crema v1.1.0 h1:zy4CzI9g/KJ8G+h245hzLh9NNEkaEybzcTnYjpptTFs=
-github.com/abema/crema v1.1.0/go.mod h1:2kfFKrRClqtGA8AEGExyGGcyo8W602YhYUhAwrSY1RU=
+github.com/abema/crema v1.1.1 h1:mGvlyqHiVDtQjS614JVUNYVxNiVcyZvYbj839cDtZEQ=
+github.com/abema/crema v1.1.1/go.mod h1:2kfFKrRClqtGA8AEGExyGGcyo8W602YhYUhAwrSY1RU=
 github.com/abema/crema/ext/protobuf v1.1.0 h1:YRvyicCFfootljthznw2O5z1RrH6/By6h+/de+eKQeI=
 github.com/abema/crema/ext/protobuf v1.1.0/go.mod h1:p2JyrHwDu7TOoQvF8VntOxVBEvtf7BS4NCWCdQxieuc=
 github.com/abema/crema/ext/ristretto v1.1.0 h1:ws86Hw7TLmL3gZ0QNKcE7ESEQIT5P7kspL8smRA7CVc=
