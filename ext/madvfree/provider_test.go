@@ -1,4 +1,4 @@
-//go:build linux && !386 && !arm && !mips && !mipsle
+//go:build (linux && !386 && !arm && !mips && !mipsle) || darwin
 
 package madvfree
 
@@ -29,6 +29,35 @@ func newTestProvider(t *testing.T, pages int) *Provider {
 	})
 
 	return provider
+}
+
+// skipUnless4KiBPages skips tests whose expectations are tied to the 4 KiB slab
+// arithmetic of x86-64 Linux (for example exact slab counts or class rounding).
+func skipUnless4KiBPages(t *testing.T) {
+	t.Helper()
+	if unix.Getpagesize() != 4096 {
+		t.Skipf("test assumes 4 KiB pages, host uses %d", unix.Getpagesize())
+	}
+}
+
+// multiPageValueSize returns a value length that resolves to a multi-page slab
+// class for the host page size, along with that class. It picks the class with
+// the most slots so reclaim tests can isolate a single slot's pages.
+func multiPageValueSize(t *testing.T, provider *Provider) (int, smallPageLayout) {
+	t.Helper()
+	best := -1
+	for classID := range provider.layouts {
+		layout := provider.layouts[classID]
+		if layout.pageCount > 1 && layout.slotCount >= 2 &&
+			(best < 0 || layout.slotCount > provider.layouts[best].slotCount) {
+			best = classID
+		}
+	}
+	if best < 0 {
+		t.Skipf("no multi-page size class for page size %d", provider.pageSize)
+	}
+
+	return provider.layouts[best].classSize, provider.layouts[best]
 }
 
 func TestProviderDefaults(t *testing.T) {
@@ -269,7 +298,7 @@ func TestProviderDetectsReclaimedMiddlePage(t *testing.T) {
 	}
 	item := provider.lookup("key")
 	middle := provider.page(item.startPage + 1)
-	if err := unix.Madvise(middle, unix.MADV_DONTNEED); err != nil {
+	if err := simulateReclaim(middle); err != nil {
 		t.Fatal(err)
 	}
 

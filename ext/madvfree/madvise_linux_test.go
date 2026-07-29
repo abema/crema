@@ -111,9 +111,9 @@ func TestRuntimeMadviseFailuresAreSoftForExtent(t *testing.T) {
 	t.Cleanup(func() {
 		_ = provider.Close()
 	})
-	provider.madvise = func([]byte, int) error {
+	provider.backend.(injectableBackend).injectMadvise(func([]byte, int) error {
 		return unix.EIO
-	}
+	})
 
 	value := bytes.Repeat([]byte{0xa5}, unix.Getpagesize())
 	if err := provider.Set(context.Background(), "key", value, 0); err != nil {
@@ -128,7 +128,7 @@ func TestRuntimeMadviseFailuresAreSoftForExtent(t *testing.T) {
 	}
 
 	stats := provider.Stats()
-	if stats.MadvFreeErrors != 2 || stats.MadvDontNeedErrors != 1 {
+	if stats.IdleErrors != 2 || stats.DiscardErrors != 1 {
 		t.Fatalf("madvise error counters = %+v", stats)
 	}
 	if stats.Entries != 0 || stats.ReservedBytes != 0 {
@@ -138,9 +138,9 @@ func TestRuntimeMadviseFailuresAreSoftForExtent(t *testing.T) {
 
 func TestRuntimeMadviseFailuresAreSoftForSmallAndTTL(t *testing.T) {
 	provider := newTestProvider(t, 4)
-	provider.madvise = func([]byte, int) error {
+	provider.backend.(injectableBackend).injectMadvise(func([]byte, int) error {
 		return unix.EIO
-	}
+	})
 
 	if err := provider.Set(context.Background(), "key", []byte("value"), time.Nanosecond); err != nil {
 		t.Fatalf("Set(): %v", err)
@@ -154,7 +154,7 @@ func TestRuntimeMadviseFailuresAreSoftForSmallAndTTL(t *testing.T) {
 	if stats.Entries != 0 || stats.ReservedBytes != 0 {
 		t.Fatalf("TTL cleanup after failed madvise = %+v", stats)
 	}
-	if stats.MadvFreeErrors == 0 || stats.MadvDontNeedErrors == 0 {
+	if stats.IdleErrors == 0 || stats.DiscardErrors == 0 {
 		t.Fatalf("madvise error counters = %+v", stats)
 	}
 }
@@ -164,14 +164,14 @@ func TestCloseIgnoresMadviseFailure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	provider.madvise = func([]byte, int) error {
+	provider.backend.(injectableBackend).injectMadvise(func([]byte, int) error {
 		return unix.EIO
-	}
+	})
 
 	if err := provider.Close(); err != nil {
 		t.Fatalf("Close(): %v", err)
 	}
-	if got := provider.Stats().MadvDontNeedErrors; got != 1 {
-		t.Fatalf("MadvDontNeedErrors = %d, want 1", got)
+	if got := provider.Stats().DiscardErrors; got != 1 {
+		t.Fatalf("DiscardErrors = %d, want 1", got)
 	}
 }
