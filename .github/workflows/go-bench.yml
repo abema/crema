@@ -37,4 +37,4 @@ jobs:
       - name: setup-git
         run: git config --global url."https://github-actions:${{ secrets.GITHUB_TOKEN }}@github.com/abema/crema".insteadOf "https://github.com/abema/crema"
       - name: Go bench
-        run: go test -v -run='^$' -bench=. -benchtime=1s ./... $(find ./ext/ -type d -mindepth 1 -maxdepth 1 | sed 's|$|/...|' | paste -sd ' ' -)
+        run: go test -v -run='^$' -bench=. -benchtime=1s ./... $(find ./ext/ -type d -mindepth 1 -maxdepth 1 | sed 's|$|/...|' | paste -sd ' ' -) ./ext/madvfree/bench/...

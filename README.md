@@ -77,6 +77,7 @@ println(value)
 | ValkeyCacheProvider | `github.com/abema/crema/ext/valkey-go` | Valkey (Redis protocol) backend. | [✅](example/valkey_go_test.go) |
 | MemcachedCacheProvider | `github.com/abema/crema/ext/gomemcache` | Memcached backend with TTL handling. | - |
 | CacheProvider | `github.com/abema/crema/ext/golang-lru` | hashicorp/golang-lru backend with default TTL. | - |
+| Provider | `github.com/abema/crema/ext/madvfree` | Linux anonymous-mmap backend using `MADV_FREE`. | - |
 
 ### CacheStorageCodec
 

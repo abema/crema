@@ -1,21 +1,13 @@
-module github.com/abema/crema/example
+module github.com/abema/crema/ext/madvfree/bench
 
 go 1.25.0
 
 require (
 	github.com/abema/crema v1.0.2
 	github.com/abema/crema/ext/madvfree v0.0.0
-	github.com/abema/crema/ext/protobuf v1.0.2
 	github.com/abema/crema/ext/ristretto v1.0.2
-	github.com/abema/crema/ext/rueidis v1.0.2
-	github.com/abema/crema/ext/valkey-go v1.0.2
 	github.com/dgraph-io/ristretto v0.2.0
-	github.com/redis/rueidis v1.0.76
-	github.com/valkey-io/valkey-go v1.0.76
-	google.golang.org/protobuf v1.36.11
 )
-
-replace github.com/abema/crema/ext/madvfree => ../ext/madvfree
 
 require (
 	github.com/cespare/xxhash/v2 v2.1.1 // indirect
@@ -23,3 +15,5 @@ require (
 	github.com/pkg/errors v0.9.1 // indirect
 	golang.org/x/sys v0.43.0 // indirect
 )
+
+replace github.com/abema/crema/ext/madvfree => ..
