@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">crema</title>
+  <desc id="desc">A top-down espresso cup with a crema wave and a sequence of cache-like bubbles.</desc>
+
+  <defs>
+    <clipPath id="coffee-surface">
+      <circle cx="480" cy="512" r="321"/>
+    </clipPath>
+  </defs>
+
+  <!-- Crema-colored canvas. -->
+  <rect width="1024" height="1024" fill="#f8e6bd"/>
+
+  <!-- Compact handle, kept behind the cup body. -->
+  <path
+    fill="#2d190f"
+    d="M739 221 805 163c25-22 64-20 87 5l6 7c23 26 20 66-7 88l-79 66z"
+  />
+
+  <!-- Cup body, lip, and espresso surface. -->
+  <circle cx="480" cy="512" r="390" fill="#2d190f"/>
+  <circle cx="480" cy="512" r="335" fill="#f8e6bd"/>
+  <circle cx="480" cy="512" r="321" fill="#2d190f"/>
+
+  <g clip-path="url(#coffee-surface)">
+    <!-- The broad lower field is the crema; the upper field remains espresso. -->
+    <path
+      fill="#dc8d24"
+      d="M116 573c72 122 173 151 272 96 77-43 139-126 222-191 72-56 145-93 216-78 69 15 107 81 113 164v334H102z"
+    />
+
+    <!-- A lighter leading edge makes the crema read as a floating layer. -->
+    <path
+      fill="none"
+      stroke="#f4b342"
+      stroke-linecap="round"
+      stroke-width="31"
+      d="M119 560c73 122 174 151 272 96 76-42 139-125 222-190 73-57 145-93 217-78 49 11 84 48 101 101"
+    />
+
+    <!-- Crema micro-bubbles along the lower curve. -->
+    <g fill="#f3b548">
+      <circle cx="309" cy="753" r="6"/>
+      <circle cx="337" cy="768" r="8"/>
+      <circle cx="372" cy="783" r="12"/>
+      <circle cx="413" cy="797" r="9"/>
+      <circle cx="455" cy="803" r="16"/>
+      <circle cx="500" cy="813" r="10"/>
+      <circle cx="538" cy="818" r="6"/>
+    </g>
+
+    <!-- Smaller bubbles where fresh crema meets espresso. -->
+    <g fill="#f4b342">
+      <circle cx="713" cy="397" r="5"/>
+      <circle cx="738" cy="385" r="7"/>
+      <circle cx="765" cy="392" r="10"/>
+      <circle cx="793" cy="405" r="8"/>
+      <circle cx="815" cy="422" r="5"/>
+    </g>
+  </g>
+
+  <!-- Probability / cache sequence. -->
+  <g fill="#f4b342">
+    <circle cx="211" cy="552" r="9"/>
+    <circle cx="230" cy="479" r="12"/>
+    <circle cx="260" cy="410" r="17"/>
+    <circle cx="309" cy="345" r="24"/>
+    <circle cx="382" cy="283" r="33"/>
+  </g>
+  <circle cx="477" cy="240" r="39" fill="#27969a"/>
+</svg>
