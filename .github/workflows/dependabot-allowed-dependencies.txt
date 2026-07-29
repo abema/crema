@@ -1,3 +1,4 @@
+golang.org/x/sys
 github.com/bradfitz/gomemcache
 github.com/valkey-io/valkey-go
 github.com/redis/rueidis

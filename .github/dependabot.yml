@@ -29,6 +29,14 @@ updates:
     schedule:
       interval: "daily"
   - package-ecosystem: "gomod"
+    directory: "/ext/madvfree"
+    schedule:
+      interval: "daily"
+  - package-ecosystem: "gomod"
+    directory: "/ext/madvfree/bench"
+    schedule:
+      interval: "daily"
+  - package-ecosystem: "gomod"
     directory: "/ext/gomemcache"
     schedule:
       interval: "daily"
