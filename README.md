@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="doc/logo.svg" alt="crema logo" width="240">
+</p>
+
 # crema ☕️
 
 A Go cache library with probabilistic revalidation and optional singleflight
