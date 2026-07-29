@@ -13,6 +13,7 @@ SUBMODULE_DIRS=(
   "ext/rueidis"
   "ext/ristretto"
   "ext/valkey-go"
+  "ext/madvfree"
   "example"
 )
 
