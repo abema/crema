@@ -112,6 +112,7 @@ func main() {
 - `WithLogger(logger)`: Override warning logger for get/set failures
 - `WithMetricsProvider(metrics)`: Record cache and loader events
 - `WithNegativeCache(ttl)`: Cache load errors for `ttl` (disabled by default)
+- `WithNegativeCacheCapacity(capacity)`: Limit negative entries (default: 32,768)
 - `WithNegativeCacheErrorPredicate(predicate)`: Choose which errors are cached
 
 ## Negative Cache
@@ -139,8 +140,9 @@ cache := crema.NewCache(
 - Successful `Set` and `Delete` operations invalidate the negative entry.
 - Errors are held in process memory, never passed to `CacheProvider` or
   `CacheStorageCodec`, and are not shared across processes.
-- The store has a fixed capacity and may evict entries before their TTL under
-  high key cardinality.
+- The store holds at most `DefaultNegativeCacheCapacity` entries by default;
+  configure it with `WithNegativeCacheCapacity`. Entries may be evicted before
+  their TTL under high key cardinality.
 - Hits and stores are reported via `RecordNegativeCacheHit` and
   `RecordNegativeCacheSet` on `MetricsProvider`.
 

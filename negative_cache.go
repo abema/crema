@@ -8,8 +8,7 @@ import (
 )
 
 const (
-	negativeCacheShardCount      = 64
-	negativeCacheShardCapacity   = 512
+	negativeCacheMaxShardCount   = 64
 	negativeCacheGenerationCount = 4096
 )
 
@@ -33,9 +32,10 @@ type negativeCacheStore struct {
 }
 
 type negativeCacheShard struct {
-	_       noCopy
-	mu      sync.RWMutex
-	entries map[string]negativeCacheEntry
+	_        noCopy
+	mu       sync.RWMutex
+	entries  map[string]negativeCacheEntry
+	capacity int
 }
 
 type negativeCacheEntry struct {
@@ -49,10 +49,20 @@ type negativeCacheToken struct {
 	generation uint64
 }
 
-func newNegativeCacheStore() *negativeCacheStore {
-	shards := make([]negativeCacheShard, negativeCacheShardCount)
+func newNegativeCacheStore(capacity int) *negativeCacheStore {
+	shardCount := min(capacity, negativeCacheMaxShardCount)
+	shards := make([]negativeCacheShard, shardCount)
+	shardCapacity := capacity / shardCount
+	remainder := capacity % shardCount
 	for i := range shards {
-		shards[i].entries = make(map[string]negativeCacheEntry)
+		capacity := shardCapacity
+		if i < remainder {
+			capacity++
+		}
+		shards[i] = negativeCacheShard{
+			entries:  make(map[string]negativeCacheEntry),
+			capacity: capacity,
+		}
 	}
 
 	return &negativeCacheStore{
@@ -107,39 +117,55 @@ func (s *negativeCacheStore) set(
 	}
 
 	shard := s.shardFor(key)
-	shard.mu.Lock()
-	if entry, ok := shard.entries[key]; ok &&
-		entry.expireAtMillis > nowMillis &&
-		entry.generation == token.generation {
-		shard.mu.Unlock()
-
+	if !shard.setIfAbsent(key, err, nowMillis, expireAtMillis, token.generation) {
 		return false
 	}
-	if _, ok := shard.entries[key]; !ok && len(shard.entries) >= negativeCacheShardCapacity {
-		for victim := range shard.entries {
-			delete(shard.entries, victim)
-
-			break
-		}
-	}
-	shard.entries[key] = negativeCacheEntry{
-		err:            err,
-		expireAtMillis: expireAtMillis,
-		generation:     token.generation,
-	}
-	shard.mu.Unlock()
-
 	if s.generations[token.index].Load() == token.generation {
 		return true
 	}
 
-	shard.mu.Lock()
-	if entry, ok := shard.entries[key]; ok && entry.generation == token.generation {
-		delete(shard.entries, key)
-	}
-	shard.mu.Unlock()
+	shard.deleteGeneration(key, token.generation)
 
 	return false
+}
+
+func (s *negativeCacheShard) setIfAbsent(
+	key string,
+	err error,
+	nowMillis int64,
+	expireAtMillis int64,
+	generation uint64,
+) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if entry, ok := s.entries[key]; ok &&
+		entry.expireAtMillis > nowMillis &&
+		entry.generation == generation {
+		return false
+	}
+	if _, ok := s.entries[key]; !ok && len(s.entries) >= s.capacity {
+		for victim := range s.entries {
+			delete(s.entries, victim)
+
+			break
+		}
+	}
+	s.entries[key] = negativeCacheEntry{
+		err:            err,
+		expireAtMillis: expireAtMillis,
+		generation:     generation,
+	}
+
+	return true
+}
+
+func (s *negativeCacheShard) deleteGeneration(key string, generation uint64) {
+	s.mu.Lock()
+	if entry, ok := s.entries[key]; ok && entry.generation == generation {
+		delete(s.entries, key)
+	}
+	s.mu.Unlock()
 }
 
 func (s *negativeCacheStore) invalidate(key string) {

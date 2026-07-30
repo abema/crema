@@ -613,6 +613,49 @@ func TestWithNegativeCache_SetsTTL(t *testing.T) {
 	if impl.negativeCacheTTL != ttl {
 		t.Fatalf("expected negative cache TTL %v, got %v", ttl, impl.negativeCacheTTL)
 	}
+	if impl.negativeCacheCapacity != DefaultNegativeCacheCapacity {
+		t.Fatalf("negative cache capacity = %d, want %d", impl.negativeCacheCapacity, DefaultNegativeCacheCapacity)
+	}
+}
+
+func TestWithNegativeCacheCapacity(t *testing.T) {
+	t.Parallel()
+
+	provider := &testMemoryProvider[int]{items: make(map[string]CacheObject[int])}
+	cache := NewCache(
+		provider,
+		NoopCacheStorageCodec[int]{},
+		WithNegativeCacheCapacity[int, CacheObject[int]](3),
+		WithNegativeCache[int, CacheObject[int]](time.Minute),
+	)
+	impl := cache.(*cacheImpl[int, CacheObject[int]])
+
+	if impl.negativeCacheCapacity != 3 {
+		t.Fatalf("negative cache capacity = %d, want 3", impl.negativeCacheCapacity)
+	}
+	if impl.negativeCache == nil {
+		t.Fatal("expected negative cache to be enabled")
+	}
+	if len(impl.negativeCache.shards) != 3 {
+		t.Fatalf("shards = %d, want 3", len(impl.negativeCache.shards))
+	}
+	totalCapacity := 0
+	for _, shard := range impl.negativeCache.shards {
+		totalCapacity += shard.capacity
+	}
+	if totalCapacity != 3 {
+		t.Fatalf("total shard capacity = %d, want 3", totalCapacity)
+	}
+
+	disabled := NewCache(
+		provider,
+		NoopCacheStorageCodec[int]{},
+		WithNegativeCache[int, CacheObject[int]](time.Minute),
+		WithNegativeCacheCapacity[int, CacheObject[int]](0),
+	).(*cacheImpl[int, CacheObject[int]])
+	if disabled.negativeCache != nil {
+		t.Fatal("expected zero capacity to disable negative caching")
+	}
 }
 
 func TestWithNegativeCacheErrorPredicate_NilKeepsDefault(t *testing.T) {
@@ -633,7 +676,7 @@ func TestWithNegativeCacheErrorPredicate_NilKeepsDefault(t *testing.T) {
 func TestNegativeCacheStore_ExpiryAndCapacity(t *testing.T) {
 	t.Parallel()
 
-	store := newNegativeCacheStore()
+	store := newNegativeCacheStore(4)
 	expectErr := errors.New("boom")
 
 	if !setNegative(store, "key", expectErr, 1000, 2000) {
@@ -661,7 +704,7 @@ func TestNegativeCacheStore_ExpiryAndCapacity(t *testing.T) {
 
 	targetShard := store.shardFor("key")
 	inserted := 0
-	for i := 0; inserted <= negativeCacheShardCapacity; i++ {
+	for i := 0; inserted <= targetShard.capacity; i++ {
 		key := fmt.Sprintf("capacity-%d", i)
 		if store.shardFor(key) != targetShard {
 			continue
@@ -672,15 +715,15 @@ func TestNegativeCacheStore_ExpiryAndCapacity(t *testing.T) {
 	targetShard.mu.RLock()
 	size := len(targetShard.entries)
 	targetShard.mu.RUnlock()
-	if size > negativeCacheShardCapacity {
-		t.Fatalf("shard size = %d, want <= %d", size, negativeCacheShardCapacity)
+	if size > targetShard.capacity {
+		t.Fatalf("shard size = %d, want <= %d", size, targetShard.capacity)
 	}
 }
 
 func TestNegativeCacheStore_SetIfAbsentAndInvalidation(t *testing.T) {
 	t.Parallel()
 
-	store := newNegativeCacheStore()
+	store := newNegativeCacheStore(DefaultNegativeCacheCapacity)
 	firstErr := errors.New("first")
 	secondErr := errors.New("second")
 	token := store.tokenFor("key")
@@ -705,7 +748,7 @@ func TestNegativeCacheStore_SetIfAbsentAndInvalidation(t *testing.T) {
 func TestNegativeCacheStore_ConcurrentAccess(t *testing.T) {
 	t.Parallel()
 
-	store := newNegativeCacheStore()
+	store := newNegativeCacheStore(DefaultNegativeCacheCapacity)
 	expectErr := errors.New("boom")
 
 	var wg sync.WaitGroup
