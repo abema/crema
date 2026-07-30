@@ -108,7 +108,7 @@ func main() {
 
 | Name | Package | Notes | Example |
 | --- | --- | --- | --- |
-| RistrettoCacheProvider | `github.com/abema/crema/ext/ristretto` | dgraph-io/ristretto backend with TTL support. | [✅](example/ristretto_test.go) |
+| RistrettoCacheProvider | `github.com/abema/crema/ext/ristretto` | dgraph-io/ristretto/v2 backend with TTL support. | [✅](example/ristretto_test.go) |
 | RedisCacheProvider | `github.com/abema/crema/ext/rueidis` | Redis backend using rueidis. | [✅](example/rueidis_test.go) |
 | ValkeyCacheProvider | `github.com/abema/crema/ext/valkey-go` | Valkey (Redis protocol) backend. | [✅](example/valkey_go_test.go) |
 | MemcachedCacheProvider | `github.com/abema/crema/ext/gomemcache` | Memcached backend with TTL handling. | - |

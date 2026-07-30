@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/abema/crema"
-	dgraphristretto "github.com/dgraph-io/ristretto"
+	dgraphristretto "github.com/dgraph-io/ristretto/v2"
 )
 
 // CostFunc returns the cost associated with a cache entry.
@@ -17,19 +17,19 @@ type CacheProviderOption[S any] func(*RistrettoCacheProvider[S])
 
 // RistrettoCacheProvider stores encoded cache entries in ristretto.
 type RistrettoCacheProvider[S any] struct {
-	cache    *dgraphristretto.Cache
+	cache    *dgraphristretto.Cache[string, S]
 	costFunc CostFunc[S]
 }
-
-// ErrUnexpectedCacheValueType indicates a non-matching value type stored in ristretto.
-var ErrUnexpectedCacheValueType = errors.New("ristretto cache returned unexpected value type")
 
 const defaultCost = int64(1)
 
 var _ crema.CacheProvider[any] = (*RistrettoCacheProvider[any])(nil)
 
 // NewRistrettoCacheProvider wraps an existing ristretto cache.
-func NewRistrettoCacheProvider[S any](cache *dgraphristretto.Cache, opts ...CacheProviderOption[S]) (*RistrettoCacheProvider[S], error) {
+func NewRistrettoCacheProvider[S any](
+	cache *dgraphristretto.Cache[string, S],
+	opts ...CacheProviderOption[S],
+) (*RistrettoCacheProvider[S], error) {
 	if cache == nil {
 		return nil, errors.New("ristretto cache is nil")
 	}
@@ -66,14 +66,8 @@ func (r *RistrettoCacheProvider[S]) Get(_ context.Context, key string) (S, bool,
 
 		return zero, false, nil
 	}
-	castValue, ok := value.(S)
-	if !ok {
-		var zero S
 
-		return zero, false, ErrUnexpectedCacheValueType
-	}
-
-	return castValue, true, nil
+	return value, true, nil
 }
 
 // Set stores a value in the cache with the specified key.

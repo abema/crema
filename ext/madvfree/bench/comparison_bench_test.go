@@ -11,7 +11,7 @@ import (
 	"github.com/abema/crema"
 	"github.com/abema/crema/ext/madvfree"
 	cremaristretto "github.com/abema/crema/ext/ristretto"
-	dgraphristretto "github.com/dgraph-io/ristretto"
+	dgraphristretto "github.com/dgraph-io/ristretto/v2"
 )
 
 const comparisonCapacity = 256 << 20
@@ -163,8 +163,8 @@ func newComparisonProviders(b *testing.B, includeWaiting bool) []benchmarkProvid
 		}
 	})
 
-	newRistretto := func() (*cremaristretto.RistrettoCacheProvider[[]byte], *dgraphristretto.Cache) {
-		cache, err := dgraphristretto.NewCache(&dgraphristretto.Config{
+	newRistretto := func() (*cremaristretto.RistrettoCacheProvider[[]byte], *dgraphristretto.Cache[string, []byte]) {
+		cache, err := dgraphristretto.NewCache(&dgraphristretto.Config[string, []byte]{
 			NumCounters: 1e5,
 			MaxCost:     comparisonCapacity,
 			BufferItems: 64,

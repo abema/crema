@@ -10,11 +10,11 @@ Ristretto-backed cache provider for `crema`.
 
 ```go
 import (
-	dgraphristretto "github.com/dgraph-io/ristretto"
+	dgraphristretto "github.com/dgraph-io/ristretto/v2"
 	cremaristretto "github.com/abema/crema/ext/ristretto"
 )
 
-cache, err := dgraphristretto.NewCache(&dgraphristretto.Config{
+cache, err := dgraphristretto.NewCache(&dgraphristretto.Config[string, []byte]{
 	NumCounters: 1e6,
 	MaxCost:     1 << 30,
 	BufferItems: 64,
