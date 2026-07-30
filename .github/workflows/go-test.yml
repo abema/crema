@@ -43,7 +43,7 @@ jobs:
           go generate
           git diff --exit-code
       - name: Go test
-        run: go test -v ./... $(find ./ext/ -type d -mindepth 1 -maxdepth 1 | sed 's|$|/...|' | paste -sd ' ' -) ./ext/madvfree/bench/...
+        run: go test -race -v ./... $(find ./ext/ -type d -mindepth 1 -maxdepth 1 | sed 's|$|/...|' | paste -sd ' ' -) ./ext/madvfree/bench/...
 
   go-test-aggregate:
     name: go-test-aggregate
