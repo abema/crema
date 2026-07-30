@@ -32,8 +32,8 @@ func calculateSteepness(targetWindowMillis int64) float64 {
 	return -math.Log(1.0-target) / targetMillis
 }
 
-func calculateProbability(steepness float64, remainMillis int64) float64 {
-	return 1.0 - math.Exp(-steepness*float64(remainMillis))
+func calculateProbability(steepness float64, remainMillis int64, windowMillis int64) float64 {
+	return 1.0 - math.Exp(-steepness*float64(windowMillis-remainMillis))
 }
 
 func writeSVG(path string, maxSecondsList []int64, samples int) error {
@@ -100,7 +100,7 @@ func writeSVG(path string, maxSecondsList []int64, samples int) error {
 		for i := 0; i < samples; i++ {
 			tSeconds := float64(curveMaxSeconds) * float64(i) / float64(samples-1)
 			tMillis := tSeconds * 1000
-			p := calculateProbability(steepness, int64(tMillis))
+			p := calculateProbability(steepness, int64(tMillis), curveMaxSeconds*1000)
 			x := float64(margin) + (tSeconds/float64(maxSeconds))*float64(plotW)
 			y := float64(margin) + (1.0-p)*float64(plotH)
 			if i > 0 {

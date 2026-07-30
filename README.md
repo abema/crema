@@ -22,13 +22,19 @@ Core functionality is covered by a high level of automated tests.
 Within the revalidation window, the cache reloads with probability
 
 ```math
-p(t)=1-e^{-kt}
+p(t)=1-e^{-k(w-t)}
 ```
 
-where `t` is the remaining time. The steepness `k` is set so that
-$`p(t)=0.999`$ at the configured window boundary, smoothing spikes near expiry.
+where `t` is the remaining time and `w` the configured revalidation window. The
+steepness `k` is set so that $`p(0)=0.999`$, so the probability is $`0`$ when an
+entry enters the window and approaches $`0.999`$ as expiry nears. This avoids a
+fixed refresh point and helps smooth spikes near expiry.
 
 ![Revalidation curve](doc/revalidation.svg)
+
+How widely reloads actually spread depends on how often the key is requested:
+because the probability is drawn per request, frequently requested keys tend to
+reload earlier in the window than rarely requested ones.
 
 This design is inspired by the following references:
 
@@ -98,7 +104,8 @@ func main() {
 
 ## Options
 
-- `WithRevalidationWindow(duration)`: Set the revalidation window
+- `WithRevalidationWindow(duration)`: Set how long before expiry probabilistic
+  reloads may start (`0` disables them)
 - `WithDirectLoader()`: Disable singleflight and call loaders directly
 - `WithMaxLoadTimeout(duration)`: Set max duration for singleflight loaders (ignored with `WithDirectLoader()`)
 - `WithRevalidationFallback(enabled)`: Enable or disable revalidation fallback (enabled by default)

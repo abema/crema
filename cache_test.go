@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"math"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -630,6 +631,48 @@ func TestCache_ShouldRevalidateProbability(t *testing.T) {
 	}
 }
 
+func TestCache_ShouldRevalidateProbabilityBoundaries(t *testing.T) {
+	t.Parallel()
+
+	steepness, window := calculateSteepnessAndRevalidationWindow(1000)
+	cache := &cacheImpl[int, CacheObject[int]]{
+		steepness:                      steepness,
+		revalidationWindowMilliseconds: window,
+	}
+
+	cache.random = fakeRandom(0)
+	if cache.shouldRevalidate(0, window) {
+		t.Fatalf("expected no revalidation at the window boundary")
+	}
+
+	for _, draw := range []float64{0.1, 0.5, 0.9} {
+		cache.random = fakeRandom(draw)
+		started := false
+		for remain := window; remain > 0; remain-- {
+			if cache.shouldRevalidate(0, remain) {
+				started = true
+
+				continue
+			}
+			if started {
+				t.Fatalf("expected probability to grow toward expiry, draw %f stopped revalidating at remain %d", draw, remain)
+			}
+		}
+		if !started {
+			t.Fatalf("expected draw %f to revalidate before expiry", draw)
+		}
+	}
+
+	cache.random = fakeRandom(0.998)
+	if !cache.shouldRevalidate(0, 1) {
+		t.Fatalf("expected revalidation just before expiry")
+	}
+	cache.random = fakeRandom(0.9995)
+	if cache.shouldRevalidate(0, 1) {
+		t.Fatalf("expected no revalidation when random draw exceeds probability")
+	}
+}
+
 func TestCalculateSteepnessAndRevalidationWindow_Defaults(t *testing.T) {
 	t.Parallel()
 
@@ -639,6 +682,22 @@ func TestCalculateSteepnessAndRevalidationWindow_Defaults(t *testing.T) {
 	}
 	if steepness <= 0 {
 		t.Fatalf("expected positive steepness, got %f", steepness)
+	}
+}
+
+func TestCalculateSteepnessAndRevalidationWindow_UsesConfiguredWindow(t *testing.T) {
+	t.Parallel()
+
+	const configuredWindow = int64(1000)
+	steepness, window := calculateSteepnessAndRevalidationWindow(configuredWindow)
+	if window != configuredWindow {
+		t.Fatalf("expected window %d, got %d", configuredWindow, window)
+	}
+
+	const targetProbability = 0.999
+	probabilityAtExpiry := 1 - math.Exp(-steepness*float64(window))
+	if math.Abs(probabilityAtExpiry-targetProbability) > 1e-12 {
+		t.Fatalf("expected probability %f, got %f", targetProbability, probabilityAtExpiry)
 	}
 }
 
