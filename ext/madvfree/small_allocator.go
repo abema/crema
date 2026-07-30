@@ -283,16 +283,6 @@ func (p *Provider) writeSmallSlotLocked(
 	return item
 }
 
-func (p *Provider) touchAndValidateSmallSlab(
-	startPage uint32,
-	meta *smallPageMeta,
-	layout smallPageLayout,
-) (bool, error) {
-	validPages, err := p.touchAndValidateSmallSlabPages(startPage, meta, layout)
-
-	return validPages == layout.allPageMask(), err
-}
-
 func (p *Provider) touchAndValidateSmallSlabPages(
 	startPage uint32,
 	meta *smallPageMeta,
@@ -480,12 +470,22 @@ func (p *Provider) finalizeSmallLocked(item *cacheEntry, meta *smallPageMeta) {
 		meta.classID == item.classID &&
 		slot < len(meta.entries) &&
 		meta.entries[slot] == item
+	var stale []*cacheEntry
 	if slotMatches && meta.refs == 0 {
-		valid, err := p.touchAndValidateSmallSlab(item.startPage, meta, layout)
-		if err != nil || !valid {
+		validPages, err := p.touchAndValidateSmallSlabPages(item.startPage, meta, layout)
+		if err != nil {
 			p.finalizeReclaimedSmallLocked(item, meta)
 
 			return
+		}
+		invalidPages := layout.allPageMask() &^ validPages
+		if invalidPages != 0 {
+			// Repair instead of discarding the slab, matching the acquisition and
+			// allocation paths: retiring one slot must not evict slots whose payload
+			// survived and only shared a reclaimed metadata page. The repair may
+			// invalidate item itself, in which case its slot is already released.
+			stale = p.repairSmallSlabPagesLocked(meta, item.startPage, layout, invalidPages)
+			slotMatches = meta.entries[slot] == item
 		}
 	}
 	if slotMatches {
@@ -519,6 +519,7 @@ func (p *Provider) finalizeSmallLocked(item *cacheEntry, meta *smallPageMeta) {
 	p.allocatorMu.Unlock()
 	meta.mu.Unlock()
 	item.mu.Unlock()
+	p.cleanupStaleSmall(stale)
 	if releasePage {
 		// Drop the page from the index before returning it to the allocator, so a
 		// concurrent allocation cannot reuse pageID and re-register this meta

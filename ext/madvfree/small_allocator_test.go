@@ -444,6 +444,127 @@ func TestMultiPageSlabAllocationRepairsPartialReclaim(t *testing.T) {
 	}
 }
 
+// TestSmallSlabRetireRepairsPartialReclaim covers retiring a slot while a
+// reclaim is pending: the slab is repaired rather than discarded, so slots whose
+// payload survived stay live. A zero-length value owns no payload page at all,
+// which makes every reclaimed page unrelated to it.
+func TestSmallSlabRetireRepairsPartialReclaim(t *testing.T) {
+	provider := newTestProvider(t, 8)
+	ctx := context.Background()
+	if err := provider.Set(ctx, "empty", []byte{}, 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := provider.Set(ctx, "retired", []byte("retired"), 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := provider.Set(ctx, "lost", []byte("lost"), 0); err != nil {
+		t.Fatal(err)
+	}
+	empty := provider.lookup("empty")
+	retired := provider.lookup("retired")
+	if empty == nil || retired == nil || empty.startPage != retired.startPage {
+		t.Fatal("entries did not share one slab")
+	}
+	layout := provider.layouts[empty.classID]
+	mask, valid := layout.slotPayloadPageMask(int(empty.slot), empty.length)
+	if !valid || mask != 0 {
+		t.Fatalf("zero-length payload page mask = %#b (valid=%v), want 0", mask, valid)
+	}
+	if err := simulateReclaim(provider.page(empty.startPage)); err != nil {
+		t.Fatal(err)
+	}
+
+	// Delete retires the slot the same way the expiration worker does.
+	if err := provider.Delete(ctx, "retired"); err != nil {
+		t.Fatal(err)
+	}
+
+	got, found, err := provider.Get(ctx, "empty")
+	if err != nil || !found || len(got) != 0 {
+		t.Fatalf("Get(\"empty\") after sibling retire = (%q, %v, %v), want hit", got, found, err)
+	}
+	if _, found, err := provider.Get(ctx, "lost"); err != nil || found {
+		t.Fatalf("Get(\"lost\") after payload reclaim = (_, %v, %v), want miss", found, err)
+	}
+	stats := provider.Stats()
+	if stats.Entries != 1 ||
+		stats.LogicalBytes != 0 ||
+		stats.ReservedBytes != int64(layout.slabBytes()) {
+		t.Fatalf("Stats() after sibling retire = %+v, want one zero-length entry", stats)
+	}
+}
+
+func TestMultiPageSlabRetireRepairsPartialReclaim(t *testing.T) {
+	provider := newTestProvider(t, 64)
+	size, layout := multiPageValueSize(t, provider)
+	keys := make([]string, layout.slotCount)
+	values := make([][]byte, layout.slotCount)
+	items := make([]*cacheEntry, layout.slotCount)
+	for slot := 0; slot < layout.slotCount; slot++ {
+		keys[slot] = fmt.Sprintf("medium-%d", slot)
+		values[slot] = bytes.Repeat([]byte{byte(slot + 1)}, size)
+		if err := provider.Set(context.Background(), keys[slot], values[slot], 0); err != nil {
+			t.Fatal(err)
+		}
+		items[slot] = provider.lookup(keys[slot])
+	}
+
+	// Retire a slot whose payload survives the reclaim of the first page, so the
+	// repair has to keep the retired slot's own metadata consistent as well.
+	const reclaimedMask = uint32(1)
+	retiredSlot := -1
+	for slot, item := range items {
+		payloadPages, maskValid := layout.slotPayloadPageMask(int(item.slot), item.length)
+		if !maskValid {
+			t.Fatalf("slot %d payload page mask is invalid", slot)
+		}
+		if payloadPages&reclaimedMask == 0 {
+			retiredSlot = slot
+
+			break
+		}
+	}
+	if retiredSlot < 0 {
+		t.Skipf("layout has no slot whose payload avoids the first page: %#v", layout)
+	}
+	if err := simulateReclaim(provider.page(items[0].startPage)); err != nil {
+		t.Fatal(err)
+	}
+	if err := provider.Delete(context.Background(), keys[retiredSlot]); err != nil {
+		t.Fatal(err)
+	}
+
+	survivors := int64(0)
+	for slot, item := range items {
+		if slot == retiredSlot {
+			continue
+		}
+		payloadPages, maskValid := layout.slotPayloadPageMask(int(item.slot), item.length)
+		if !maskValid {
+			t.Fatalf("slot %d payload page mask is invalid", slot)
+		}
+		got, found, err := provider.Get(context.Background(), keys[slot])
+		if payloadPages&reclaimedMask != 0 {
+			if err != nil || found {
+				t.Fatalf("Get(%q) after payload reclaim = (_, %v, %v), want miss", keys[slot], found, err)
+			}
+
+			continue
+		}
+		survivors++
+		if err != nil || !found || !bytes.Equal(got, values[slot]) {
+			t.Fatalf("Get(%q) after unrelated retire = (len=%d, %v, %v), want hit", keys[slot], len(got), found, err)
+		}
+	}
+	if survivors == 0 {
+		t.Skipf("layout has no slot that outlives the retire: %#v", layout)
+	}
+	stats := provider.Stats()
+	if stats.Entries != survivors || stats.ReservedBytes != int64(layout.slabBytes()) {
+		t.Fatalf("Stats() after repaired retire = %+v, want entries=%d", stats, survivors)
+	}
+}
+
 func TestMultiPageSlabFallsBackToExtent(t *testing.T) {
 	skipUnless4KiBPages(t)
 	pageSize := unix.Getpagesize()
