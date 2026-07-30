@@ -79,6 +79,49 @@ func TestJSONByteStringCodec_DoesNotEscapeHTML(t *testing.T) {
 	}
 }
 
+func TestJSONByteStringCodec_EncodeToAppendsWithoutTrailingNewline(t *testing.T) {
+	t.Parallel()
+
+	codec := JSONByteStringCodec[int]{}
+	input := CacheObject[int]{
+		Value:          10,
+		ExpireAtMillis: 1234,
+	}
+	buf := bytes.NewBufferString("prefix")
+	if err := codec.EncodeTo(buf, input); err != nil {
+		t.Fatalf("EncodeTo() error = %v", err)
+	}
+
+	encoded, err := codec.Encode(input)
+	if err != nil {
+		t.Fatalf("Encode() error = %v", err)
+	}
+	if got, want := buf.String(), "prefix"+string(encoded); got != want {
+		t.Fatalf("expected EncodeTo to append %q, got %q", want, got)
+	}
+
+	decoded, err := codec.Decode(buf.Bytes()[len("prefix"):])
+	if err != nil {
+		t.Fatalf("Decode() error = %v", err)
+	}
+	if decoded != input {
+		t.Fatalf("expected decoded value %+v, got %+v", input, decoded)
+	}
+}
+
+func TestJSONByteStringCodec_EncodeToErrorRestoresBuffer(t *testing.T) {
+	t.Parallel()
+
+	codec := JSONByteStringCodec[func()]{}
+	buf := bytes.NewBufferString("prefix")
+	if err := codec.EncodeTo(buf, CacheObject[func()]{Value: func() {}}); err == nil {
+		t.Fatal("expected EncodeTo error, got nil")
+	}
+	if got := buf.String(); got != "prefix" {
+		t.Fatalf("expected buffer to be restored to %q, got %q", "prefix", got)
+	}
+}
+
 func TestJSONByteStringCodec_CanReleaseBufferOnDecode(t *testing.T) {
 	t.Parallel()
 
@@ -348,6 +391,168 @@ func TestBinaryCompressionCodec_UnsupportedCompressionType(t *testing.T) {
 	if _, err := codec.Decode([]byte{0xff, 0x00}); err == nil {
 		t.Fatal("expected decode error for unsupported compression type, got nil")
 	}
+}
+
+// bufferEncoderCodec encodes only through EncodeTo so that tests can detect
+// whether binaryCompressionCodec took the BufferEncoder path.
+type bufferEncoderCodec struct {
+	binaryCompressionTestCodec
+}
+
+func (bufferEncoderCodec) Encode(value CacheObject[string]) ([]byte, error) {
+	return nil, errEncodeFailed
+}
+
+func (c bufferEncoderCodec) EncodeTo(buf *bytes.Buffer, value CacheObject[string]) error {
+	encoded, err := c.binaryCompressionTestCodec.Encode(value)
+	if err != nil {
+		return err
+	}
+	buf.Write(encoded)
+
+	return nil
+}
+
+func TestBinaryCompressionCodec_BufferEncoderRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name              string
+		threshold         int
+		value             string
+		compressionTypeID byte
+	}{
+		{
+			name:              "compressed",
+			threshold:         0,
+			value:             "hello",
+			compressionTypeID: CompressionTypeIDZlib,
+		},
+		{
+			name:              "uncompressed",
+			threshold:         DefaultCompressThresholdBytes,
+			value:             "hello",
+			compressionTypeID: CompressionTypeIDNone,
+		},
+		{
+			name:              "uncompressed with negative threshold",
+			threshold:         -1,
+			value:             strings.Repeat("a", DefaultCompressThresholdBytes),
+			compressionTypeID: CompressionTypeIDNone,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			input := CacheObject[string]{
+				Value:          tt.value,
+				ExpireAtMillis: 1234,
+			}
+			codec := NewBinaryCompressionCodec(bufferEncoderCodec{}, tt.threshold)
+			encoded, err := codec.Encode(input)
+			if err != nil {
+				t.Fatalf("Encode() error = %v", err)
+			}
+			if encoded[0] != tt.compressionTypeID {
+				t.Fatalf("expected compression type ID %v, got %v", tt.compressionTypeID, encoded[0])
+			}
+
+			// the BufferEncoder path must produce the same bytes as the plain codec path
+			plain, err := NewBinaryCompressionCodec(binaryCompressionTestCodec{}, tt.threshold).Encode(input)
+			if err != nil {
+				t.Fatalf("Encode() error = %v", err)
+			}
+			if !bytes.Equal(encoded, plain) {
+				t.Fatalf("expected identical encoded bytes, got %v and %v", encoded, plain)
+			}
+
+			decoded, err := codec.Decode(encoded)
+			if err != nil {
+				t.Fatalf("Decode() error = %v", err)
+			}
+			if decoded != input {
+				t.Fatalf("expected decoded value %+v, got %+v", input, decoded)
+			}
+		})
+	}
+}
+
+func TestBinaryCompressionCodec_BufferEncoderEncodeError(t *testing.T) {
+	t.Parallel()
+
+	codec := NewBinaryCompressionCodec[func()](JSONByteStringCodec[func()]{}, 0)
+	if _, err := codec.Encode(CacheObject[func()]{Value: func() {}}); err == nil {
+		t.Fatal("expected encode error, got nil")
+	}
+}
+
+func TestBinaryCompressionCodec_BufferEncoderRepeatedEncode(t *testing.T) {
+	t.Parallel()
+
+	codec := NewBinaryCompressionCodec(bufferEncoderCodec{}, DefaultCompressThresholdBytes)
+	binaryCodec, ok := any(codec).(*binaryCompressionCodec[string])
+	if !ok {
+		t.Fatalf("expected binary compression codec, got %T", codec)
+	}
+	if binaryCodec.innerBufferEncoder == nil {
+		t.Fatal("expected inner buffer encoder to be detected")
+	}
+
+	// encoding repeatedly must not leak state through the pooled buffer
+	for _, value := range []string{"hello", "hi", strings.Repeat("a", 128)} {
+		input := CacheObject[string]{Value: value, ExpireAtMillis: 1234}
+		encoded, err := codec.Encode(input)
+		if err != nil {
+			t.Fatalf("Encode() error = %v", err)
+		}
+		decoded, err := codec.Decode(encoded)
+		if err != nil {
+			t.Fatalf("Decode() error = %v", err)
+		}
+		if decoded != input {
+			t.Fatalf("expected decoded value %+v, got %+v", input, decoded)
+		}
+	}
+}
+
+func TestBinaryCompressionCodec_ConcurrentEncode(t *testing.T) {
+	t.Parallel()
+
+	codec := NewBinaryCompressionCodec(binaryCompressionTestCodec{}, 0)
+	var wg sync.WaitGroup
+	for i := range 32 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+
+			input := CacheObject[string]{
+				Value:          strings.Repeat(strconv.Itoa(i), 1+i*8),
+				ExpireAtMillis: int64(i),
+			}
+			for range 16 {
+				encoded, err := codec.Encode(input)
+				if err != nil {
+					t.Errorf("Encode() error = %v", err)
+
+					return
+				}
+				decoded, err := codec.Decode(encoded)
+				if err != nil {
+					t.Errorf("Decode() error = %v", err)
+
+					return
+				}
+				if decoded != input {
+					t.Errorf("expected decoded value %+v, got %+v", input, decoded)
+
+					return
+				}
+			}
+		}()
+	}
+	wg.Wait()
 }
 
 type bufferReleasePolicyCodec struct {

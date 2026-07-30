@@ -23,6 +23,17 @@ type BufferReleasePolicy interface {
 	CanReleaseBufferOnDecode() bool
 }
 
+// BufferEncoder encodes a cache object into a caller-provided buffer.
+// Codecs may implement it in addition to CacheStorageCodec so that wrapping codecs
+// such as the one returned by NewBinaryCompressionCodec can encode into a pooled
+// buffer instead of copying a freshly allocated encoded value.
+type BufferEncoder[V any] interface {
+	// EncodeTo appends the encoded cache object to buf.
+	// Implementations must leave buf unchanged, except for appended bytes, and
+	// must restore its original length when they return an error.
+	EncodeTo(buf *bytes.Buffer, value CacheObject[V]) error
+}
+
 // NoopCacheStorageCodec passes CacheObject values through without encoding.
 type NoopCacheStorageCodec[V any] struct{}
 
@@ -44,22 +55,34 @@ type JSONByteStringCodec[V any] struct{}
 var (
 	_ CacheStorageCodec[any, []byte] = JSONByteStringCodec[any]{}
 	_ BufferReleasePolicy            = JSONByteStringCodec[any]{}
+	_ BufferEncoder[any]             = JSONByteStringCodec[any]{}
 )
 
 // Encode marshals the cache object into JSON bytes without a trailing newline.
 func (j JSONByteStringCodec[V]) Encode(value CacheObject[V]) ([]byte, error) {
 	buf := bytes.NewBuffer(nil)
+	if err := j.EncodeTo(buf, value); err != nil {
+		return nil, err
+	}
+
+	return buf.Bytes(), nil
+}
+
+// EncodeTo appends the cache object as JSON bytes to buf without a trailing newline.
+func (j JSONByteStringCodec[V]) EncodeTo(buf *bytes.Buffer, value CacheObject[V]) error {
+	offset := buf.Len()
 	enc := json.NewEncoder(buf)
 	enc.SetEscapeHTML(false)
 	if err := enc.Encode(value); err != nil {
-		return nil, err
+		buf.Truncate(offset)
+
+		return err
 	}
-	b := buf.Bytes()
-	if len(b) > 0 && b[len(b)-1] == '\n' {
-		b = b[:len(b)-1]
+	if b := buf.Bytes(); len(b) > offset && b[len(b)-1] == '\n' {
+		buf.Truncate(buf.Len() - 1)
 	}
 
-	return b, nil
+	return nil
 }
 
 // Decode unmarshals JSON bytes into a cache object.
@@ -92,6 +115,7 @@ var (
 
 type binaryCompressionCodec[V any] struct {
 	inner                    CacheStorageCodec[V, []byte]
+	innerBufferEncoder       BufferEncoder[V]
 	compressThresholdBytes   int
 	bufPool                  sync.Pool
 	canReleaseBufferOnDecode bool
@@ -102,6 +126,8 @@ var _ CacheStorageCodec[any, []byte] = &binaryCompressionCodec[any]{}
 // NewBinaryCompressionCodec returns a codec that conditionally compresses
 // encoded values with zlib when they reach the threshold.
 // A threshold of 0 always compresses, and a negative threshold disables compression.
+// When inner implements BufferEncoder, it encodes into a pooled buffer that already
+// holds the compression type ID, which avoids an extra copy of the encoded value.
 func NewBinaryCompressionCodec[V any](
 	inner CacheStorageCodec[V, []byte],
 	compressThresholdBytes int,
@@ -110,9 +136,11 @@ func NewBinaryCompressionCodec[V any](
 	if policy, ok := any(inner).(BufferReleasePolicy); ok {
 		canReleaseBufferOnDecode = policy.CanReleaseBufferOnDecode()
 	}
+	innerBufferEncoder, _ := any(inner).(BufferEncoder[V])
 
 	return &binaryCompressionCodec[V]{
 		inner:                  inner,
+		innerBufferEncoder:     innerBufferEncoder,
 		compressThresholdBytes: compressThresholdBytes,
 		bufPool: sync.Pool{
 			New: func() any {
@@ -124,11 +152,15 @@ func NewBinaryCompressionCodec[V any](
 }
 
 func (b *binaryCompressionCodec[V]) Encode(value CacheObject[V]) ([]byte, error) {
+	if b.innerBufferEncoder != nil {
+		return b.encodeViaBuffer(value)
+	}
+
 	innerBuf, err := b.inner.Encode(value)
 	if err != nil {
 		return nil, err
 	}
-	if b.compressThresholdBytes < 0 || len(innerBuf) < b.compressThresholdBytes {
+	if b.skipCompression(len(innerBuf)) {
 		buf := make([]byte, 1+len(innerBuf))
 		buf[0] = CompressionTypeIDNone
 		copy(buf[1:], innerBuf)
@@ -136,19 +168,45 @@ func (b *binaryCompressionCodec[V]) Encode(value CacheObject[V]) ([]byte, error)
 		return buf, nil
 	}
 
+	return b.compress(innerBuf)
+}
+
+// encodeViaBuffer lets the inner codec write into a pooled buffer that already holds
+// the compression type ID, so the encoded value is copied only once, on the way out.
+func (b *binaryCompressionCodec[V]) encodeViaBuffer(value CacheObject[V]) ([]byte, error) {
+	// innerBuf MUST NOT be used outside of this function scope
+	innerBuf := b.acquireBuffer()
+	defer b.returnBuffer(innerBuf)
+
+	innerBuf.WriteByte(CompressionTypeIDNone)
+	if err := b.innerBufferEncoder.EncodeTo(innerBuf, value); err != nil {
+		return nil, err
+	}
+	encoded := innerBuf.Bytes()
+	if b.skipCompression(len(encoded) - 1) {
+		return bytes.Clone(encoded), nil
+	}
+
+	return b.compress(encoded[1:])
+}
+
+// compress writes the compression type ID and the zlib stream of data into a pooled
+// buffer, so the result is copied only once, on the way out.
+func (b *binaryCompressionCodec[V]) compress(data []byte) ([]byte, error) {
 	// compressBuf MUST NOT be used outside of this function scope
 	compressBuf := b.acquireBuffer()
 	defer b.returnBuffer(compressBuf)
 
-	if err := compressZlib(compressBuf, innerBuf); err != nil {
+	compressBuf.WriteByte(CompressionTypeIDZlib)
+	if err := compressZlib(compressBuf, data); err != nil {
 		return nil, err
 	}
 
-	buf := make([]byte, 1+compressBuf.Len())
-	buf[0] = CompressionTypeIDZlib
-	copy(buf[1:], compressBuf.Bytes())
+	return bytes.Clone(compressBuf.Bytes()), nil
+}
 
-	return buf, nil
+func (b *binaryCompressionCodec[V]) skipCompression(innerLen int) bool {
+	return b.compressThresholdBytes < 0 || innerLen < b.compressThresholdBytes
 }
 
 func (b *binaryCompressionCodec[V]) Decode(data []byte) (CacheObject[V], error) {
@@ -190,8 +248,23 @@ func (b *binaryCompressionCodec[V]) returnBuffer(buf *bytes.Buffer) {
 	b.bufPool.Put(buf)
 }
 
+// zlibWriterPool pools zlib writers because allocating one allocates the whole
+// deflate compression state, which dominates the cost of a small compressed value.
+var zlibWriterPool = sync.Pool{
+	New: func() any {
+		return zlib.NewWriter(nil)
+	},
+}
+
 func compressZlib(buf *bytes.Buffer, data []byte) error {
-	writer := zlib.NewWriter(buf)
+	writer := zlibWriterPool.Get().(*zlib.Writer)
+	defer func() {
+		// drop the reference to buf so that it can be released independently
+		writer.Reset(nil)
+		zlibWriterPool.Put(writer)
+	}()
+
+	writer.Reset(buf)
 	if _, err := writer.Write(data); err != nil {
 		_ = writer.Close()
 

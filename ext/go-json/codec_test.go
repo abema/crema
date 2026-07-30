@@ -32,6 +32,41 @@ func TestJSONByteStringCodec_RoundTrip(t *testing.T) {
 	}
 }
 
+func TestJSONByteStringCodec_EncodeToAppendsWithoutTrailingNewline(t *testing.T) {
+	t.Parallel()
+
+	codec := JSONByteStringCodec[int]{}
+	input := crema.CacheObject[int]{
+		Value:          10,
+		ExpireAtMillis: 1234,
+	}
+	buf := bytes.NewBufferString("prefix")
+	if err := codec.EncodeTo(buf, input); err != nil {
+		t.Fatalf("EncodeTo() error = %v", err)
+	}
+
+	encoded, err := codec.Encode(input)
+	if err != nil {
+		t.Fatalf("Encode() error = %v", err)
+	}
+	if got, want := buf.String(), "prefix"+string(encoded); got != want {
+		t.Fatalf("expected EncodeTo to append %q, got %q", want, got)
+	}
+}
+
+func TestJSONByteStringCodec_EncodeToErrorRestoresBuffer(t *testing.T) {
+	t.Parallel()
+
+	codec := JSONByteStringCodec[func()]{}
+	buf := bytes.NewBufferString("prefix")
+	if err := codec.EncodeTo(buf, crema.CacheObject[func()]{Value: func() {}}); err == nil {
+		t.Fatal("expected EncodeTo error, got nil")
+	}
+	if got := buf.String(); got != "prefix" {
+		t.Fatalf("expected buffer to be restored to %q, got %q", "prefix", got)
+	}
+}
+
 func TestJSONByteStringCodec_DecodeError(t *testing.T) {
 	t.Parallel()
 
