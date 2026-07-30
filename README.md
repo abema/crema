@@ -93,12 +93,15 @@ func main() {
   or your own codec.
 - **CacheObject**: A thin wrapper holding `Value` and absolute expiry
   (`ExpireAtMillis`).
+- **Revalidation fallback**: Revalidation failures return a still-valid cached value
+  by default. Missing or expired values still return the loader error.
 
 ## Options
 
 - `WithRevalidationWindow(duration)`: Set the revalidation window
 - `WithDirectLoader()`: Disable singleflight and call loaders directly
 - `WithMaxLoadTimeout(duration)`: Set max duration for singleflight loaders (ignored with `WithDirectLoader()`)
+- `WithRevalidationFallback(enabled)`: Enable or disable revalidation fallback (enabled by default)
 - `WithLogger(logger)`: Override warning logger for get/set failures
 - `WithMetricsProvider(metrics)`: Record cache and loader events
 

@@ -34,6 +34,7 @@ type cacheImpl[V any, S any] struct {
 	steepness                      float64
 	revalidationWindowMilliseconds int64
 	maxLoadTimeout                 time.Duration
+	revalidationFallback           bool
 	random                         func() float64 // must goroutine safe
 }
 
@@ -69,8 +70,12 @@ func WithMetricsProvider[V any, S any](metrics MetricsProvider) CacheOption[V, S
 			metrics = NoopMetricsProvider{}
 		}
 		c.metrics = metrics
-		if loader, ok := c.internalLoader.(*singleflightLoader[V]); ok {
+		switch loader := c.internalLoader.(type) {
+		case *singleflightLoader[V]:
 			loader.metrics = metrics
+		case directLoader[V]:
+			loader.metrics = metrics
+			c.internalLoader = loader
 		}
 	}
 }
@@ -78,7 +83,7 @@ func WithMetricsProvider[V any, S any](metrics MetricsProvider) CacheOption[V, S
 // WithDirectLoader disables singleflight and calls loaders directly.
 func WithDirectLoader[V any, S any]() CacheOption[V, S] {
 	return func(c *cacheImpl[V, S]) {
-		c.internalLoader = directLoader[V]{}
+		c.internalLoader = directLoader[V]{metrics: c.metrics}
 	}
 }
 
@@ -104,6 +109,14 @@ func WithMaxLoadTimeout[V any, S any](duration time.Duration) CacheOption[V, S] 
 	}
 }
 
+// WithRevalidationFallback controls whether GetOrLoad returns a still-valid
+// cached value when revalidation fails. It is enabled by default.
+func WithRevalidationFallback[V any, S any](enabled bool) CacheOption[V, S] {
+	return func(c *cacheImpl[V, S]) {
+		c.revalidationFallback = enabled
+	}
+}
+
 // NewCache constructs a Cache with defaults and optional overrides.
 func NewCache[V any, S any](provider CacheProvider[S], codec CacheStorageCodec[V, S], opts ...CacheOption[V, S]) Cache[V, S] {
 	steepness, revalidationWindowMilliseconds := calculateSteepnessAndRevalidationWindow(defaultRevalidationWindowMilliseconds)
@@ -119,6 +132,7 @@ func NewCache[V any, S any](provider CacheProvider[S], codec CacheStorageCodec[V
 		steepness:                      steepness,
 		revalidationWindowMilliseconds: revalidationWindowMilliseconds,
 		maxLoadTimeout:                 0,
+		revalidationFallback:           true,
 	}
 	for _, opt := range opts {
 		if opt == nil {
@@ -181,12 +195,18 @@ func (c *cacheImpl[V, S]) GetOrLoad(ctx context.Context, key string, ttl time.Du
 		c.logger.Warn("failed to get from cache", slog.String("key", key), slog.String("error", err.Error()))
 		found = false
 	}
-	if found && !c.shouldRevalidate(c.now().UnixMilli(), value.ExpireAtMillis) {
+	nowMillis := c.now().UnixMilli()
+	if found && !c.shouldRevalidate(nowMillis, value.ExpireAtMillis) {
 		return value.Value, nil
 	}
 
 	v, leader, err := c.internalLoader.load(ctx, key, loader)
 	if err != nil {
+		if c.canFallback(ctx, found, value) {
+			c.logger.Warn("failed to load, falling back to cached value", slog.String("key", key), slog.String("error", err.Error()))
+
+			return value.Value, nil
+		}
 		var zero V
 
 		return zero, err
@@ -202,6 +222,13 @@ func (c *cacheImpl[V, S]) GetOrLoad(ctx context.Context, key string, ttl time.Du
 	}
 
 	return v, nil
+}
+
+func (c *cacheImpl[V, S]) canFallback(ctx context.Context, found bool, value CacheObject[V]) bool {
+	return ctx.Err() == nil &&
+		c.revalidationFallback &&
+		found &&
+		value.ExpireAtMillis > c.now().UnixMilli()
 }
 
 // shouldRevalidate returns true if the entry is expired, or if the remaining

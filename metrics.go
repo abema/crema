@@ -19,6 +19,15 @@ type MetricsProvider interface {
 	RecordLoadConcurrency(ctx context.Context, concurrency int)
 }
 
+// LoadErrorMetricsProvider optionally records loader failures.
+type LoadErrorMetricsProvider interface {
+	MetricsProvider
+
+	// RecordLoadError is called once per failed loader execution, including
+	// failures absorbed by revalidation fallback.
+	RecordLoadError(ctx context.Context)
+}
+
 type BaseMetricsProvider struct{}
 
 func (BaseMetricsProvider) RecordCacheHit(context.Context)             {}
@@ -27,7 +36,14 @@ func (BaseMetricsProvider) RecordCacheSet(context.Context)             {}
 func (BaseMetricsProvider) RecordCacheDelete(context.Context)          {}
 func (BaseMetricsProvider) RecordLoad(context.Context)                 {}
 func (BaseMetricsProvider) RecordLoadConcurrency(context.Context, int) {}
+func (BaseMetricsProvider) RecordLoadError(context.Context)            {}
 
 type NoopMetricsProvider struct {
 	BaseMetricsProvider
+}
+
+func recordLoadError(metrics MetricsProvider, ctx context.Context) {
+	if metrics, ok := metrics.(LoadErrorMetricsProvider); ok {
+		metrics.RecordLoadError(ctx)
+	}
 }
