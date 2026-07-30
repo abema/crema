@@ -112,7 +112,7 @@ func main() {
 | RedisCacheProvider | `github.com/abema/crema/ext/rueidis` | Redis backend using rueidis. | [✅](example/rueidis_test.go) |
 | ValkeyCacheProvider | `github.com/abema/crema/ext/valkey-go` | Valkey (Redis protocol) backend. | [✅](example/valkey_go_test.go) |
 | MemcachedCacheProvider | `github.com/abema/crema/ext/gomemcache` | Memcached backend with TTL handling. | - |
-| CacheProvider | `github.com/abema/crema/ext/golang-lru` | hashicorp/golang-lru backend with a fixed default TTL. | [Quick Start](#quick-start) |
+| CacheProvider | `github.com/abema/crema/ext/golang-lru` | hashicorp/golang-lru backend with a [provider-wide TTL](ext/golang-lru/README.md#ttl-behavior). | [Quick Start](#quick-start) |
 | Provider | `github.com/abema/crema/ext/madvfree` | Best-effort anonymous-mmap byte cache for 64-bit Linux and macOS. | [✅](example/madvfree_test.go) |
 
 ### CacheStorageCodec
