@@ -236,18 +236,30 @@ func debugProviderState(provider *Provider) string {
 
 func assertProviderStats(t *testing.T, provider *Provider) {
 	t.Helper()
+	if err := checkProviderStats(provider); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// checkProviderStats reports arena accounting violations instead of failing the
+// test directly, so concurrent workers can check the same invariants from their
+// own goroutines. Stats reads its gauges under allocatorMu, so every snapshot is
+// consistent even while other goroutines allocate and release.
+func checkProviderStats(provider *Provider) error {
 	stats := provider.Stats()
 	if stats.Entries < 0 || stats.LogicalBytes < 0 || stats.ReservedBytes < 0 || stats.FreeBytes < 0 {
-		t.Fatalf("negative stats: %+v", stats)
+		return fmt.Errorf("negative stats: %+v", stats)
 	}
 	if stats.ReservedBytes+stats.FreeBytes != int64(provider.capacity) {
-		t.Fatalf("arena accounting mismatch: %+v, capacity=%d", stats, provider.capacity)
+		return fmt.Errorf("arena accounting mismatch: %+v, capacity=%d", stats, provider.capacity)
 	}
 	if stats.LogicalBytes > stats.ReservedBytes {
-		t.Fatalf(
+		return fmt.Errorf(
 			"logical bytes exceed reserved bytes: %+v; state=%s",
 			stats,
 			debugProviderState(provider),
 		)
 	}
+
+	return nil
 }
