@@ -8,11 +8,12 @@ import (
 )
 
 type testMemcacheClient struct {
-	mu        sync.Mutex
-	items     map[string]testMemcacheItem
-	getItem   *memcache.Item
-	getErr    error
-	deleteErr error
+	mu         sync.Mutex
+	items      map[string]testMemcacheItem
+	lastSetTTL int32
+	getItem    *memcache.Item
+	getErr     error
+	deleteErr  error
 }
 
 type testMemcacheItem struct {
@@ -55,12 +56,25 @@ func (t *testMemcacheClient) Set(item *memcache.Item) error {
 	stored := testMemcacheItem{
 		value: append([]byte(nil), item.Value...),
 	}
-	if item.Expiration > 0 {
+	// Mirror Memcached: expirations above 30 days are absolute UNIX timestamps.
+	switch {
+	case item.Expiration > maxRelativeExpirationSeconds:
+		stored.expiresAt = time.Unix(int64(item.Expiration), 0)
+	case item.Expiration > 0:
 		stored.expiresAt = time.Now().Add(time.Duration(item.Expiration) * time.Second)
 	}
 	t.items[item.Key] = stored
+	t.lastSetTTL = item.Expiration
 
 	return nil
+}
+
+// LastSetTTL returns the expiration value passed to the most recent Set.
+func (t *testMemcacheClient) LastSetTTL() int32 {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	return t.lastSetTTL
 }
 
 func (t *testMemcacheClient) Delete(key string) error {

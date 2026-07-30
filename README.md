@@ -121,7 +121,7 @@ func main() {
 | RistrettoCacheProvider | `github.com/abema/crema/ext/ristretto` | dgraph-io/ristretto/v2 backend with TTL support. | [✅](example/ristretto_test.go) |
 | RedisCacheProvider | `github.com/abema/crema/ext/rueidis` | Redis backend using rueidis. | [✅](example/rueidis_test.go) |
 | ValkeyCacheProvider | `github.com/abema/crema/ext/valkey-go` | Valkey (Redis protocol) backend. | [✅](example/valkey_go_test.go) |
-| MemcachedCacheProvider | `github.com/abema/crema/ext/gomemcache` | Memcached backend with TTL handling. | - |
+| MemcachedCacheProvider | `github.com/abema/crema/ext/gomemcache` | Memcached backend with TTL handling. TTLs over 30 days are mapped to the closest expiry Memcached can express ([details](ext/gomemcache/README.md#ttl-handling-and-the-year-2038)). | - |
 | CacheProvider | `github.com/abema/crema/ext/golang-lru` | hashicorp/golang-lru backend with a [provider-wide TTL](ext/golang-lru/README.md#ttl-behavior). | [Quick Start](#quick-start) |
 | Provider | `github.com/abema/crema/ext/madvfree` | Best-effort anonymous-mmap byte cache for 64-bit Linux and macOS. | [✅](example/madvfree_test.go) |
 
