@@ -24,13 +24,9 @@ type BufferReleasePolicy interface {
 }
 
 // BufferEncoder encodes a cache object into a caller-provided buffer.
-// Codecs may implement it in addition to CacheStorageCodec so that wrapping codecs
-// such as the one returned by NewBinaryCompressionCodec can encode into a pooled
-// buffer instead of copying a freshly allocated encoded value.
+// On error, EncodeTo must restore buf's original length.
 type BufferEncoder[V any] interface {
 	// EncodeTo appends the encoded cache object to buf.
-	// Implementations must leave buf unchanged, except for appended bytes, and
-	// must restore its original length when they return an error.
 	EncodeTo(buf *bytes.Buffer, value CacheObject[V]) error
 }
 
@@ -126,8 +122,6 @@ var _ CacheStorageCodec[any, []byte] = &binaryCompressionCodec[any]{}
 // NewBinaryCompressionCodec returns a codec that conditionally compresses
 // encoded values with zlib when they reach the threshold.
 // A threshold of 0 always compresses, and a negative threshold disables compression.
-// When inner implements BufferEncoder, it encodes into a pooled buffer that already
-// holds the compression type ID, which avoids an extra copy of the encoded value.
 func NewBinaryCompressionCodec[V any](
 	inner CacheStorageCodec[V, []byte],
 	compressThresholdBytes int,
@@ -171,10 +165,7 @@ func (b *binaryCompressionCodec[V]) Encode(value CacheObject[V]) ([]byte, error)
 	return b.compress(innerBuf)
 }
 
-// encodeViaBuffer lets the inner codec write into a pooled buffer that already holds
-// the compression type ID, so the encoded value is copied only once, on the way out.
 func (b *binaryCompressionCodec[V]) encodeViaBuffer(value CacheObject[V]) ([]byte, error) {
-	// innerBuf MUST NOT be used outside of this function scope
 	innerBuf := b.acquireBuffer()
 	defer b.returnBuffer(innerBuf)
 
@@ -190,10 +181,7 @@ func (b *binaryCompressionCodec[V]) encodeViaBuffer(value CacheObject[V]) ([]byt
 	return b.compress(encoded[1:])
 }
 
-// compress writes the compression type ID and the zlib stream of data into a pooled
-// buffer, so the result is copied only once, on the way out.
 func (b *binaryCompressionCodec[V]) compress(data []byte) ([]byte, error) {
-	// compressBuf MUST NOT be used outside of this function scope
 	compressBuf := b.acquireBuffer()
 	defer b.returnBuffer(compressBuf)
 
@@ -248,8 +236,7 @@ func (b *binaryCompressionCodec[V]) returnBuffer(buf *bytes.Buffer) {
 	b.bufPool.Put(buf)
 }
 
-// zlibWriterPool pools zlib writers because allocating one allocates the whole
-// deflate compression state, which dominates the cost of a small compressed value.
+// zlibWriterPool avoids allocating a deflate state for every Encode call.
 var zlibWriterPool = sync.Pool{
 	New: func() any {
 		return zlib.NewWriter(nil)

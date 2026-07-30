@@ -459,7 +459,6 @@ func TestBinaryCompressionCodec_BufferEncoderRoundTrip(t *testing.T) {
 				t.Fatalf("expected compression type ID %v, got %v", tt.compressionTypeID, encoded[0])
 			}
 
-			// the BufferEncoder path must produce the same bytes as the plain codec path
 			plain, err := NewBinaryCompressionCodec(binaryCompressionTestCodec{}, tt.threshold).Encode(input)
 			if err != nil {
 				t.Fatalf("Encode() error = %v", err)
@@ -500,7 +499,6 @@ func TestBinaryCompressionCodec_BufferEncoderRepeatedEncode(t *testing.T) {
 		t.Fatal("expected inner buffer encoder to be detected")
 	}
 
-	// encoding repeatedly must not leak state through the pooled buffer
 	for _, value := range []string{"hello", "hi", strings.Repeat("a", 128)} {
 		input := CacheObject[string]{Value: value, ExpireAtMillis: 1234}
 		encoded, err := codec.Encode(input)
