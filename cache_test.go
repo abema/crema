@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -14,18 +15,47 @@ import (
 
 type testMetricsProvider struct {
 	BaseMetricsProvider
+
+	loads       atomic.Int64
+	loadErrors  atomic.Int64
+	mu          sync.Mutex
+	reasons     []LoadReason
+	concurrency []int
 }
 
-type metricsProviderWithoutLoadError struct{}
+func (m *testMetricsProvider) RecordLoad(context.Context) {
+	m.loads.Add(1)
+}
 
-func (metricsProviderWithoutLoadError) RecordCacheHit(context.Context)             {}
-func (metricsProviderWithoutLoadError) RecordCacheGet(context.Context)             {}
-func (metricsProviderWithoutLoadError) RecordCacheSet(context.Context)             {}
-func (metricsProviderWithoutLoadError) RecordCacheDelete(context.Context)          {}
-func (metricsProviderWithoutLoadError) RecordLoad(context.Context)                 {}
-func (metricsProviderWithoutLoadError) RecordLoadConcurrency(context.Context, int) {}
+func (m *testMetricsProvider) RecordLoadError(context.Context) {
+	m.loadErrors.Add(1)
+}
 
-var _ MetricsProvider = metricsProviderWithoutLoadError{}
+func (m *testMetricsProvider) RecordLoadReason(_ context.Context, reason LoadReason) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.reasons = append(m.reasons, reason)
+}
+
+func (m *testMetricsProvider) RecordLoadConcurrency(_ context.Context, concurrency int) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.concurrency = append(m.concurrency, concurrency)
+}
+
+func (m *testMetricsProvider) recordedReasons() []LoadReason {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	return append([]LoadReason(nil), m.reasons...)
+}
+
+func (m *testMetricsProvider) recordedConcurrency() []int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	return append([]int(nil), m.concurrency...)
+}
 
 type countingMetricsProvider struct {
 	BaseMetricsProvider
@@ -139,6 +169,100 @@ func TestCache_GetOrLoadLoaderErrorSkipsCache(t *testing.T) {
 	}
 	if _, ok := provider.items["answer"]; ok {
 		t.Fatalf("expected no cache entry when loader fails")
+	}
+}
+
+func TestCache_GetOrLoadRecordsLoadReason(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		entry      *CacheObject[int]
+		random     float64
+		wantLoads  int64
+		wantReason LoadReason
+	}{
+		{name: "miss", wantLoads: 1, wantReason: LoadReasonMiss},
+		{
+			name:       "expired",
+			entry:      &CacheObject[int]{Value: 1, ExpireAtMillis: 900},
+			wantLoads:  1,
+			wantReason: LoadReasonExpired,
+		},
+		{
+			name:       "revalidation",
+			entry:      &CacheObject[int]{Value: 1, ExpireAtMillis: 1100},
+			random:     0,
+			wantLoads:  1,
+			wantReason: LoadReasonRevalidation,
+		},
+		{
+			name:   "fresh",
+			entry:  &CacheObject[int]{Value: 1, ExpireAtMillis: 2000},
+			random: 1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			provider := &testMemoryProvider[int]{items: make(map[string]CacheObject[int])}
+			if tt.entry != nil {
+				provider.items["answer"] = *tt.entry
+			}
+			metrics := &testMetricsProvider{}
+			cache := NewCache(
+				provider,
+				NoopCacheStorageCodec[int]{},
+				WithMetricsProvider[int, CacheObject[int]](metrics),
+			)
+			impl := cache.(*cacheImpl[int, CacheObject[int]])
+			impl.now = func() time.Time { return time.UnixMilli(1000) }
+			impl.random = fakeRandom(tt.random)
+
+			if _, err := cache.GetOrLoad(context.Background(), "answer", time.Second, func(context.Context) (int, error) {
+				return 42, nil
+			}); err != nil {
+				t.Fatalf("get or load: %v", err)
+			}
+
+			if got := metrics.loads.Load(); got != tt.wantLoads {
+				t.Fatalf("loads = %d, want %d", got, tt.wantLoads)
+			}
+			reasons := metrics.recordedReasons()
+			if tt.wantLoads == 0 {
+				if len(reasons) != 0 {
+					t.Fatalf("reasons = %v, want none", reasons)
+				}
+
+				return
+			}
+			if len(reasons) != 1 || reasons[0] != tt.wantReason {
+				t.Fatalf("reasons = %v, want [%v]", reasons, tt.wantReason)
+			}
+		})
+	}
+}
+
+func TestCache_GetOrLoadRecordsLoadError(t *testing.T) {
+	t.Parallel()
+
+	metrics := &testMetricsProvider{}
+	cache := NewCache(
+		&testMemoryProvider[int]{items: make(map[string]CacheObject[int])},
+		NoopCacheStorageCodec[int]{},
+		WithMetricsProvider[int, CacheObject[int]](metrics),
+	)
+	expectErr := errors.New("loader failed")
+
+	if _, err := cache.GetOrLoad(context.Background(), "answer", time.Second, func(context.Context) (int, error) {
+		return 0, expectErr
+	}); err != expectErr {
+		t.Fatalf("expected error %v, got %v", expectErr, err)
+	}
+	if got := metrics.loadErrors.Load(); got != 1 {
+		t.Fatalf("load errors = %d, want 1", got)
 	}
 }
 
@@ -337,7 +461,12 @@ func TestCache_GetOrLoadSkipsCacheOnGetError(t *testing.T) {
 
 	expectErr := errors.New("get failed")
 	provider := &errorProvider[CacheObject[int]]{getErr: expectErr}
-	cache := NewCache(provider, NoopCacheStorageCodec[int]{})
+	metrics := &testMetricsProvider{}
+	cache := NewCache(
+		provider,
+		NoopCacheStorageCodec[int]{},
+		WithMetricsProvider[int, CacheObject[int]](metrics),
+	)
 	impl := cache.(*cacheImpl[int, CacheObject[int]])
 	impl.now = func() time.Time { return time.UnixMilli(1000) }
 
@@ -365,6 +494,10 @@ func TestCache_GetOrLoadSkipsCacheOnGetError(t *testing.T) {
 	}
 	if calls != 2 {
 		t.Fatalf("expected loader to be called twice, got %d", calls)
+	}
+	reasons := metrics.recordedReasons()
+	if len(reasons) != 2 || reasons[0] != LoadReasonGetError || reasons[1] != LoadReasonGetError {
+		t.Fatalf("reasons = %v, want two get errors", reasons)
 	}
 }
 
@@ -567,6 +700,72 @@ func TestWithMetricsProvider_WithDirectLoader(t *testing.T) {
 	}
 	if loader.metrics != metrics {
 		t.Fatalf("expected loader metrics to be set")
+	}
+}
+
+func TestWithMetricsProvider_BeforeLoaderOptions(t *testing.T) {
+	t.Parallel()
+
+	provider := &testMemoryProvider[int]{items: make(map[string]CacheObject[int])}
+	metrics := &testMetricsProvider{}
+
+	cache := NewCache(
+		provider,
+		NoopCacheStorageCodec[int]{},
+		WithMetricsProvider[int, CacheObject[int]](metrics),
+		WithMaxLoadTimeout[int, CacheObject[int]](time.Minute),
+	)
+	impl := cache.(*cacheImpl[int, CacheObject[int]])
+
+	loader, ok := impl.internalLoader.(*singleflightLoader[int])
+	if !ok {
+		t.Fatalf("expected internal loader to be singleflightLoader")
+	}
+	if loader.metrics != metrics {
+		t.Fatalf("expected loader metrics to be set regardless of option order")
+	}
+	if loader.maxLoadTimeout != time.Minute {
+		t.Fatalf("expected max load timeout to be set, got %v", loader.maxLoadTimeout)
+	}
+}
+
+func TestDirectLoader_RecordsLoadMetrics(t *testing.T) {
+	t.Parallel()
+
+	provider := &testMemoryProvider[int]{items: make(map[string]CacheObject[int])}
+	provider.items["answer"] = CacheObject[int]{
+		Value:          1,
+		ExpireAtMillis: 900,
+	}
+	metrics := &testMetricsProvider{}
+	cache := NewCache(
+		provider,
+		NoopCacheStorageCodec[int]{},
+		WithDirectLoader[int, CacheObject[int]](),
+		WithMetricsProvider[int, CacheObject[int]](metrics),
+	)
+	impl := cache.(*cacheImpl[int, CacheObject[int]])
+	impl.now = func() time.Time { return time.UnixMilli(1000) }
+
+	expectErr := errors.New("loader failed")
+	_, err := cache.GetOrLoad(context.Background(), "answer", time.Second, func(context.Context) (int, error) {
+		return 0, expectErr
+	})
+	if err != expectErr {
+		t.Fatalf("expected error %v, got %v", expectErr, err)
+	}
+
+	if got := metrics.loads.Load(); got != 1 {
+		t.Fatalf("expected 1 load, got %d", got)
+	}
+	if got := metrics.loadErrors.Load(); got != 1 {
+		t.Fatalf("expected 1 load error, got %d", got)
+	}
+	if reasons := metrics.recordedReasons(); len(reasons) != 1 || reasons[0] != LoadReasonExpired {
+		t.Fatalf("expected reasons [%v], got %v", LoadReasonExpired, reasons)
+	}
+	if got := metrics.recordedConcurrency(); len(got) != 1 || got[0] != 1 {
+		t.Fatalf("expected concurrency [1], got %v", got)
 	}
 }
 

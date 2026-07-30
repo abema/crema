@@ -83,7 +83,7 @@ func FuzzSingleflightLoaderLoad(f *testing.F) {
 			go func() {
 				ready <- struct{}{}
 				<-start
-				val, leader, err := loaderImpl.load(context.Background(), k, loaders[k])
+				val, leader, err := loaderImpl.load(context.Background(), k, LoadReasonMiss, loaders[k])
 				results <- struct {
 					key    string
 					val    int

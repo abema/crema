@@ -36,6 +36,7 @@ type cacheImpl[V any, S any] struct {
 	maxLoadTimeout                 time.Duration
 	revalidationFallback           bool
 	random                         func() float64 // must goroutine safe
+	useDirectLoader                bool
 }
 
 // CacheObject wraps a cached value with its absolute expiration time.
@@ -70,20 +71,13 @@ func WithMetricsProvider[V any, S any](metrics MetricsProvider) CacheOption[V, S
 			metrics = NoopMetricsProvider{}
 		}
 		c.metrics = metrics
-		switch loader := c.internalLoader.(type) {
-		case *singleflightLoader[V]:
-			loader.metrics = metrics
-		case directLoader[V]:
-			loader.metrics = metrics
-			c.internalLoader = loader
-		}
 	}
 }
 
 // WithDirectLoader disables singleflight and calls loaders directly.
 func WithDirectLoader[V any, S any]() CacheOption[V, S] {
 	return func(c *cacheImpl[V, S]) {
-		c.internalLoader = directLoader[V]{metrics: c.metrics}
+		c.useDirectLoader = true
 	}
 }
 
@@ -102,10 +96,6 @@ func WithRevalidationWindow[V any, S any](duration time.Duration) CacheOption[V,
 func WithMaxLoadTimeout[V any, S any](duration time.Duration) CacheOption[V, S] {
 	return func(c *cacheImpl[V, S]) {
 		c.maxLoadTimeout = duration
-		switch loader := c.internalLoader.(type) {
-		case *singleflightLoader[V]:
-			loader.maxLoadTimeout = duration
-		}
 	}
 }
 
@@ -120,25 +110,29 @@ func WithRevalidationFallback[V any, S any](enabled bool) CacheOption[V, S] {
 // NewCache constructs a Cache with defaults and optional overrides.
 func NewCache[V any, S any](provider CacheProvider[S], codec CacheStorageCodec[V, S], opts ...CacheOption[V, S]) Cache[V, S] {
 	steepness, revalidationWindowMilliseconds := calculateSteepnessAndRevalidationWindow(defaultRevalidationWindowMilliseconds)
-	metrics := NoopMetricsProvider{}
 	cache := &cacheImpl[V, S]{
 		provider:                       provider,
 		codec:                          codec,
 		logger:                         slog.New(noopLogHandler{}),
-		metrics:                        metrics,
-		internalLoader:                 newSingleflightLoader[V](metrics, 0),
+		metrics:                        NoopMetricsProvider{},
 		now:                            time.Now,
 		random:                         rand.Float64,
 		steepness:                      steepness,
 		revalidationWindowMilliseconds: revalidationWindowMilliseconds,
 		maxLoadTimeout:                 0,
 		revalidationFallback:           true,
+		useDirectLoader:                false,
 	}
 	for _, opt := range opts {
 		if opt == nil {
 			continue
 		}
 		opt(cache)
+	}
+	if cache.useDirectLoader {
+		cache.internalLoader = newDirectLoader[V](cache.metrics)
+	} else {
+		cache.internalLoader = newSingleflightLoader[V](cache.metrics, cache.maxLoadTimeout)
 	}
 
 	return cache
@@ -190,17 +184,26 @@ func (c *cacheImpl[V, S]) Delete(ctx context.Context, key string) error {
 
 // GetOrLoad returns a cached value or uses loader when missing or revalidating.
 func (c *cacheImpl[V, S]) GetOrLoad(ctx context.Context, key string, ttl time.Duration, loader CacheLoadFunc[V]) (V, error) {
+	reason := LoadReasonMiss
 	value, found, err := c.Get(ctx, key)
 	if err != nil {
 		c.logger.Warn("failed to get from cache", slog.String("key", key), slog.String("error", err.Error()))
 		found = false
+		reason = LoadReasonGetError
 	}
-	nowMillis := c.now().UnixMilli()
-	if found && !c.shouldRevalidate(nowMillis, value.ExpireAtMillis) {
-		return value.Value, nil
+	if found {
+		nowMillis := c.now().UnixMilli()
+		switch {
+		case value.ExpireAtMillis <= nowMillis:
+			reason = LoadReasonExpired
+		case c.shouldRevalidate(nowMillis, value.ExpireAtMillis):
+			reason = LoadReasonRevalidation
+		default:
+			return value.Value, nil
+		}
 	}
 
-	v, leader, err := c.internalLoader.load(ctx, key, loader)
+	v, leader, err := c.internalLoader.load(ctx, key, reason, loader)
 	if err != nil {
 		if c.canFallback(ctx, found, value) {
 			c.logger.Warn("failed to load, falling back to cached value", slog.String("key", key), slog.String("error", err.Error()))
