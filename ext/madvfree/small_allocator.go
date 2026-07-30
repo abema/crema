@@ -273,10 +273,8 @@ func (p *Provider) writeSmallSlotLocked(
 	meta.used++
 	meta.refs++
 
-	p.allocatorMu.Lock()
 	p.stats.entries.Add(1)
 	p.stats.logicalBytes.Add(int64(len(value)))
-	p.allocatorMu.Unlock()
 	p.stats.allocations.Add(1)
 	p.stats.smallAllocations.Add(1)
 
@@ -463,7 +461,7 @@ func (p *Provider) retireSmall(item *cacheEntry) {
 
 // finalizeSmallLocked consumes both item.mu and meta.mu.
 //
-//nolint:cyclop,funlen // Slot and page lifecycle transitions must remain in one lock-consuming function.
+//nolint:cyclop // Slot and page lifecycle transitions must remain in one lock-consuming function.
 func (p *Provider) finalizeSmallLocked(item *cacheEntry, meta *smallPageMeta) {
 	if item.freed {
 		meta.mu.Unlock()
@@ -513,10 +511,8 @@ func (p *Provider) finalizeSmallLocked(item *cacheEntry, meta *smallPageMeta) {
 	classID := item.classID
 	pageGeneration := item.generation
 
-	p.allocatorMu.Lock()
 	p.stats.entries.Add(-1)
 	p.stats.logicalBytes.Add(-int64(item.length))
-	p.allocatorMu.Unlock()
 	meta.mu.Unlock()
 	item.mu.Unlock()
 	if releasePage {
@@ -540,10 +536,8 @@ func (p *Provider) finalizeReclaimedSmallLocked(item *cacheEntry, meta *smallPag
 	item.freed = true
 	item.state = entryDead
 
-	p.allocatorMu.Lock()
 	p.stats.entries.Add(-1)
 	p.stats.logicalBytes.Add(-int64(item.length))
-	p.allocatorMu.Unlock()
 	meta.mu.Unlock()
 	item.mu.Unlock()
 
@@ -604,10 +598,8 @@ func (p *Provider) finalizeStaleSmall(item *cacheEntry) {
 	item.freed = true
 	item.state = entryDead
 
-	p.allocatorMu.Lock()
 	p.stats.entries.Add(-1)
 	p.stats.logicalBytes.Add(-int64(item.length))
-	p.allocatorMu.Unlock()
 	item.mu.Unlock()
 }
 

@@ -272,6 +272,72 @@ func assertExpiryHeapInvariants(t *testing.T, provider *Provider, want int) {
 	}
 }
 
+// TestProviderExpiryHeapConsistentUnderMixedTTL mixes keys with and without a
+// TTL across goroutines. Entries without a TTL bypass expiryMu, so this asserts
+// that skipping the lock still leaves exactly one record per indexed TTL entry.
+func TestProviderExpiryHeapConsistentUnderMixedTTL(t *testing.T) {
+	provider := newTestProvider(t, 64)
+	ctx := context.Background()
+
+	const (
+		workers    = 8
+		iterations = 200
+	)
+	var group sync.WaitGroup
+	for worker := 0; worker < workers; worker++ {
+		group.Add(1)
+		go func(worker int) {
+			defer group.Done()
+			// A one-hour TTL never fires during the test, so every surviving
+			// record must still be reachable from its entry when the workers stop.
+			ttl := time.Duration(0)
+			if worker%2 == 0 {
+				ttl = time.Hour
+			}
+			key := string(rune('a' + worker))
+			for iteration := 0; iteration < iterations; iteration++ {
+				if err := provider.Set(ctx, key, []byte{byte(iteration)}, ttl); err != nil &&
+					!errors.Is(err, ErrCapacity) {
+					t.Errorf("Set(%q): %v", key, err)
+
+					return
+				}
+				if _, _, err := provider.Get(ctx, key); err != nil {
+					t.Errorf("Get(%q): %v", key, err)
+
+					return
+				}
+				if iteration%8 == 7 {
+					if err := provider.Delete(ctx, key); err != nil {
+						t.Errorf("Delete(%q): %v", key, err)
+
+						return
+					}
+				}
+			}
+		}(worker)
+	}
+	group.Wait()
+
+	assertExpiryHeapInvariants(t, provider, countIndexedWithTTL(provider))
+}
+
+func countIndexedWithTTL(provider *Provider) int {
+	var total int
+	for shardIndex := range provider.shards {
+		shard := &provider.shards[shardIndex]
+		shard.mu.RLock()
+		for _, item := range shard.entries {
+			if item.expiresAt != 0 {
+				total++
+			}
+		}
+		shard.mu.RUnlock()
+	}
+
+	return total
+}
+
 func TestProviderBackgroundExpirationReleasesCapacity(t *testing.T) {
 	provider := newTestProvider(t, 1)
 	if err := provider.Set(context.Background(), "expired", []byte("value"), time.Millisecond); err != nil {

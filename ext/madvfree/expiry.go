@@ -40,7 +40,47 @@ func (h *expiryHeap) Pop() any {
 	return value
 }
 
-// addExpiryLocked registers item while expiryMu is held.
+// cancelExpiry unregisters item from the expiration heap.
+//
+// Entries stored without a TTL are never registered, so they never touch
+// expiryMu: expiresAt is assigned once when the entry is built and is immutable
+// afterwards, which makes the lock-free check safe.
+func (p *Provider) cancelExpiry(item *cacheEntry) bool {
+	if item == nil || item.expiresAt == 0 {
+		return false
+	}
+
+	p.expiryMu.Lock()
+	wakeExpiry := p.cancelExpiryLocked(item)
+	p.expiryMu.Unlock()
+
+	return wakeExpiry
+}
+
+// rescheduleExpiry swaps old's registration for item's in a single expiryMu
+// critical section, and skips the lock entirely when neither entry has a TTL.
+func (p *Provider) rescheduleExpiry(old, item *cacheEntry) bool {
+	oldRegistered := old != nil && old.expiresAt != 0
+	if !oldRegistered && item.expiresAt == 0 {
+		return false
+	}
+
+	p.expiryMu.Lock()
+	wakeExpiry := false
+	if oldRegistered {
+		wakeExpiry = p.cancelExpiryLocked(old)
+	}
+	if item.expiresAt != 0 {
+		wakeExpiry = p.addExpiryLocked(item) || wakeExpiry
+	}
+	p.expiryMu.Unlock()
+
+	return wakeExpiry
+}
+
+// addExpiryLocked registers item while expiryMu is held. Callers must have
+// established item.expiresAt != 0, so an entry without a TTL never gains a
+// record.
 func (p *Provider) addExpiryLocked(item *cacheEntry) bool {
 	earliest := len(p.expirations) == 0 || item.expiresAt < p.expirations[0].expiresAt
 	record := &expiryRecord{

@@ -313,8 +313,8 @@ func (p *Provider) Set(ctx context.Context, key string, value []byte, ttl time.D
 		p.allocatorMu.Lock()
 		startPage, allocated := p.allocator.allocate(pageCount)
 		if allocated {
-			p.stats.entries.Add(1)
-			p.stats.logicalBytes.Add(int64(len(value)))
+			// reservedBytes mirrors the allocator's free list, so it is published
+			// inside the same critical section to keep Stats' arena accounting exact.
 			p.stats.reservedBytes.Add(int64(pageCount) * int64(p.pageSize))
 		}
 		p.allocatorMu.Unlock()
@@ -323,6 +323,8 @@ func (p *Provider) Set(ctx context.Context, key string, value []byte, ttl time.D
 
 			return ErrCapacity
 		}
+		p.stats.entries.Add(1)
+		p.stats.logicalBytes.Add(int64(len(value)))
 
 		item = &cacheEntry{
 			key:        key,
@@ -335,10 +337,10 @@ func (p *Provider) Set(ctx context.Context, key string, value []byte, ttl time.D
 		}
 		region := p.extentBytes(item.startPage, item.pageCount)
 		if err := p.markActive(region); err != nil {
-			p.allocatorMu.Lock()
-			p.allocator.release(startPage, pageCount)
 			p.stats.entries.Add(-1)
 			p.stats.logicalBytes.Add(-int64(len(value)))
+			p.allocatorMu.Lock()
+			p.allocator.release(startPage, pageCount)
 			p.stats.reservedBytes.Add(-int64(pageCount) * int64(p.pageSize))
 			p.allocatorMu.Unlock()
 			p.stats.allocationFails.Add(1)
@@ -465,10 +467,10 @@ func (p *Provider) Close() error {
 	} else {
 		p.arena = nil
 	}
-	p.allocatorMu.Lock()
-	p.allocator = newExtentAllocator(0)
 	p.stats.entries.Store(0)
 	p.stats.logicalBytes.Store(0)
+	p.allocatorMu.Lock()
+	p.allocator = newExtentAllocator(0)
 	p.stats.reservedBytes.Store(0)
 	p.allocatorMu.Unlock()
 	p.lifecycle.Unlock()
@@ -478,17 +480,23 @@ func (p *Provider) Close() error {
 }
 
 // Stats returns a point-in-time snapshot of gauges and cumulative counters.
+//
+// Every field is read independently, so the snapshot is approximate under
+// concurrent traffic: counters are maintained with atomic operations rather than
+// a global lock, and a Set or Delete running alongside Stats may be reflected in
+// some fields but not others. Only ReservedBytes and FreeBytes are read together
+// under the allocator lock, so their sum always equals the arena capacity.
+// Successive snapshots are individually consistent for each field; do not derive
+// exact invariants across fields.
 func (p *Provider) Stats() Stats {
 	p.allocatorMu.Lock()
 	freeBytes := int64(p.allocator.freePages()) * int64(p.pageSize)
-	entries := p.stats.entries.Load()
-	logicalBytes := p.stats.logicalBytes.Load()
 	reservedBytes := p.stats.reservedBytes.Load()
 	p.allocatorMu.Unlock()
 
 	return Stats{
-		Entries:           entries,
-		LogicalBytes:      logicalBytes,
+		Entries:           p.stats.entries.Load(),
+		LogicalBytes:      p.stats.logicalBytes.Load(),
 		ReservedBytes:     reservedBytes,
 		FreeBytes:         freeBytes,
 		Hits:              p.stats.hits.Load(),
@@ -625,11 +633,11 @@ func (p *Provider) finalizeExtent(item *cacheEntry) {
 	p.discard(p.extentBytes(item.startPage, item.pageCount))
 	item.mu.Unlock()
 
+	p.stats.entries.Add(-1)
+	p.stats.logicalBytes.Add(-int64(item.length))
 	p.allocatorMu.Lock()
 	p.allocator.release(item.startPage, item.pageCount)
 	p.stats.reservedBytes.Add(-int64(item.pageCount) * int64(p.pageSize))
-	p.stats.entries.Add(-1)
-	p.stats.logicalBytes.Add(-int64(item.length))
 	p.allocatorMu.Unlock()
 }
 
@@ -711,12 +719,7 @@ func (p *Provider) replace(key string, item *cacheEntry) *cacheEntry {
 	shard := p.shard(key)
 	shard.mu.Lock()
 	old := shard.entries[key]
-	p.expiryMu.Lock()
-	wakeExpiry := p.cancelExpiryLocked(old)
-	if item.expiresAt != 0 {
-		wakeExpiry = p.addExpiryLocked(item) || wakeExpiry
-	}
-	p.expiryMu.Unlock()
+	wakeExpiry := p.rescheduleExpiry(old, item)
 	shard.entries[key] = item
 	shard.mu.Unlock()
 	if wakeExpiry {
@@ -730,9 +733,7 @@ func (p *Provider) remove(key string) *cacheEntry {
 	shard := p.shard(key)
 	shard.mu.Lock()
 	item := shard.entries[key]
-	p.expiryMu.Lock()
-	wakeExpiry := p.cancelExpiryLocked(item)
-	p.expiryMu.Unlock()
+	wakeExpiry := p.cancelExpiry(item)
 	delete(shard.entries, key)
 	shard.mu.Unlock()
 	if wakeExpiry {
@@ -750,9 +751,7 @@ func (p *Provider) removeIfSame(key string, expected *cacheEntry) bool {
 
 		return false
 	}
-	p.expiryMu.Lock()
-	wakeExpiry := p.cancelExpiryLocked(expected)
-	p.expiryMu.Unlock()
+	wakeExpiry := p.cancelExpiry(expected)
 	delete(shard.entries, key)
 	shard.mu.Unlock()
 	if wakeExpiry {
@@ -769,9 +768,7 @@ func (p *Provider) drainIndex(limit int64) []*cacheEntry {
 		shard := &p.shards[shardIndex]
 		shard.mu.Lock()
 		for key, item := range shard.entries {
-			p.expiryMu.Lock()
-			wakeExpiry := p.cancelExpiryLocked(item)
-			p.expiryMu.Unlock()
+			wakeExpiry := p.cancelExpiry(item)
 			delete(shard.entries, key)
 			result = append(result, item)
 			reserved += int64(item.pageCount) * int64(p.pageSize)
@@ -796,9 +793,7 @@ func (p *Provider) popAny() *cacheEntry {
 		shard := &p.shards[shardIndex]
 		shard.mu.Lock()
 		for key, item := range shard.entries {
-			p.expiryMu.Lock()
-			wakeExpiry := p.cancelExpiryLocked(item)
-			p.expiryMu.Unlock()
+			wakeExpiry := p.cancelExpiry(item)
 			delete(shard.entries, key)
 			shard.mu.Unlock()
 			if wakeExpiry {
