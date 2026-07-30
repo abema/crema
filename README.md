@@ -166,12 +166,6 @@ runs them separately with the required service.
 
 - `cmd/plot-revalidation`: SVG plot generator for revalidation curves
 
-## Changelog
-
-Behavior changes that are not visible from the API are recorded in
-[CHANGELOG.md](CHANGELOG.md). Per-release notes live in
-[GitHub Releases](https://github.com/abema/crema/releases).
-
 ## Why "crema"?
 
 Crema is the golden foam that forms on top of a freshly pulled espresso coffee
