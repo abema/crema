@@ -3,6 +3,7 @@ package gomemcache
 import (
 	"context"
 	"errors"
+	"math"
 	"testing"
 	"time"
 )
@@ -116,22 +117,128 @@ func TestMemcachedCacheProvider_DeleteError(t *testing.T) {
 	}
 }
 
-func TestTTLSeconds_RoundsUpAndClamps(t *testing.T) {
+func TestMemcachedCacheProvider_LongTTLDoesNotExpireImmediately(t *testing.T) {
 	t.Parallel()
+
+	client := newTestMemcacheClient()
+	provider := NewMemcachedCacheProvider(client)
+	ctx := context.Background()
+
+	if err := provider.Set(ctx, "key", []byte("value"), 60*24*time.Hour); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+
+	switch got := client.lastSetExpiration(); {
+	case got == maxRelativeExpirationSeconds:
+	case int64(got) > time.Now().Unix():
+	default:
+		t.Fatalf("expiration %d is neither a future timestamp nor the 30-day fallback", got)
+	}
+
+	_, ok, err := provider.Get(ctx, "key")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected value to exist")
+	}
+}
+
+func TestMemcachedExpiration(t *testing.T) {
+	t.Parallel()
+
+	const maxRelative = maxRelativeExpirationSeconds
+
+	base := time.Unix(1_700_000_000, 0)
+	tieBreak := time.Unix(math.MaxInt32-maxRelative, 0)
+
 	tests := []struct {
 		name string
 		ttl  time.Duration
+		now  time.Time
 		want int32
 	}{
-		{name: "zero", ttl: 0, want: 1},
-		{name: "negative", ttl: -time.Second, want: 1},
-		{name: "fractional", ttl: 1500 * time.Millisecond, want: 2},
+		{name: "zero", ttl: 0, now: base, want: 1},
+		{name: "negative", ttl: -time.Second, now: base, want: 1},
+		{name: "fractional", ttl: 1500 * time.Millisecond, now: base, want: 2},
+		{
+			name: "just below thirty days stays relative",
+			ttl:  maxRelative*time.Second - time.Second,
+			now:  base,
+			want: maxRelative - 1,
+		},
+		{
+			name: "exactly thirty days stays relative",
+			ttl:  maxRelative * time.Second,
+			now:  base,
+			want: maxRelative,
+		},
+		{
+			name: "just above thirty days becomes absolute",
+			ttl:  maxRelative*time.Second + time.Second,
+			now:  base,
+			want: int32(base.Unix()) + maxRelative + 1,
+		},
+		{
+			name: "fractional above thirty days rounds up",
+			ttl:  maxRelative*time.Second + 1500*time.Millisecond,
+			now:  base,
+			want: int32(base.Unix()) + maxRelative + 2,
+		},
+		{
+			name: "sixty days becomes absolute",
+			ttl:  60 * 24 * time.Hour,
+			now:  base,
+			want: int32(base.Unix()) + 60*24*60*60,
+		},
+		{
+			name: "beyond 2038 takes the absolute maximum",
+			ttl:  100 * 365 * 24 * time.Hour,
+			now:  base,
+			want: math.MaxInt32,
+		},
+		{
+			name: "max duration takes the absolute maximum",
+			ttl:  math.MaxInt64,
+			now:  base,
+			want: math.MaxInt32,
+		},
+		{
+			name: "absolute maximum still reaches thirty days out",
+			ttl:  100 * 365 * 24 * time.Hour,
+			now:  tieBreak,
+			want: math.MaxInt32,
+		},
+		{
+			name: "relative wins once the absolute maximum is nearer than thirty days",
+			ttl:  100 * 365 * 24 * time.Hour,
+			now:  tieBreak.Add(time.Second),
+			want: maxRelative,
+		},
+		{
+			name: "relative wins at the int32 boundary",
+			ttl:  60 * 24 * time.Hour,
+			now:  time.Unix(math.MaxInt32, 0),
+			want: maxRelative,
+		},
+		{
+			name: "relative wins after the int32 boundary",
+			ttl:  60 * 24 * time.Hour,
+			now:  time.Unix(math.MaxInt32, 0).Add(365 * 24 * time.Hour),
+			want: maxRelative,
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := ttlSeconds(tt.ttl); got != tt.want {
-				t.Fatalf("ttlSeconds(%v) = %d, want %d", tt.ttl, got, tt.want)
+			t.Parallel()
+
+			got := memcachedExpiration(tt.ttl, tt.now)
+			if got != tt.want {
+				t.Fatalf("memcachedExpiration(%v, %d) = %d, want %d", tt.ttl, tt.now.Unix(), got, tt.want)
+			}
+			if got > maxRelative && int64(got) <= tt.now.Unix() {
+				t.Fatalf("memcachedExpiration(%v, %d) = %d, which is already in the past", tt.ttl, tt.now.Unix(), got)
 			}
 		})
 	}

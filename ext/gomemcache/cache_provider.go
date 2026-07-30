@@ -42,7 +42,7 @@ func (p *MemcachedCacheProvider) Get(_ context.Context, key string) ([]byte, boo
 func (p *MemcachedCacheProvider) Set(_ context.Context, key string, value []byte, ttl time.Duration) error {
 	item := &memcache.Item{Key: key, Value: value}
 	if ttl > 0 {
-		item.Expiration = ttlSeconds(ttl)
+		item.Expiration = memcachedExpiration(ttl, time.Now())
 	}
 
 	return p.client.Set(item)
@@ -63,11 +63,30 @@ type memcacheClient interface {
 	Delete(key string) error
 }
 
-func ttlSeconds(ttl time.Duration) int32 {
-	seconds := int32(math.Ceil(ttl.Seconds()))
+// Expiration values above 30 days are interpreted as UNIX timestamps.
+const maxRelativeExpirationSeconds = 60 * 60 * 24 * 30
+
+// memcachedExpiration converts a TTL to a relative or absolute expiration.
+func memcachedExpiration(ttl time.Duration, now time.Time) int32 {
+	seconds := int64(ttl / time.Second)
+	if ttl%time.Second != 0 {
+		seconds++
+	}
 	if seconds < 1 {
 		return 1
 	}
+	if seconds <= maxRelativeExpirationSeconds {
+		return int32(seconds)
+	}
 
-	return seconds
+	unixNow := now.Unix()
+	if expiresAt := unixNow + seconds; expiresAt <= math.MaxInt32 {
+		return int32(expiresAt)
+	}
+
+	if math.MaxInt32-unixNow >= maxRelativeExpirationSeconds {
+		return math.MaxInt32
+	}
+
+	return maxRelativeExpirationSeconds
 }
