@@ -17,8 +17,14 @@ type MetricsProvider interface {
 	RecordLoad(ctx context.Context)
 	// RecordLoadConcurrency is called when a load finishes with the inflight count.
 	RecordLoadConcurrency(ctx context.Context, concurrency int)
-	// RecordLoadError is called when a load fails, including when the failure is
-	// absorbed by the stale fallback.
+}
+
+// LoadErrorMetricsProvider optionally records loader failures.
+type LoadErrorMetricsProvider interface {
+	MetricsProvider
+
+	// RecordLoadError is called once per failed loader execution, including
+	// failures absorbed by revalidation fallback.
 	RecordLoadError(ctx context.Context)
 }
 
@@ -34,4 +40,10 @@ func (BaseMetricsProvider) RecordLoadError(context.Context)            {}
 
 type NoopMetricsProvider struct {
 	BaseMetricsProvider
+}
+
+func recordLoadError(metrics MetricsProvider, ctx context.Context) {
+	if metrics, ok := metrics.(LoadErrorMetricsProvider); ok {
+		metrics.RecordLoadError(ctx)
+	}
 }

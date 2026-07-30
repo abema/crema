@@ -5,6 +5,6 @@
 // the max load timeout is ignored and loaders run with the caller context.
 //
 // By default a still-valid cached value is served when a revalidation load
-// fails, instead of propagating the loader error. Use WithStaleFallback(false)
-// to always propagate loader errors.
+// fails, instead of propagating the loader error. Use
+// WithRevalidationFallback(false) to always propagate loader errors.
 package crema

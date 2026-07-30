@@ -163,6 +163,9 @@ func (l *singleflightLoader[V]) load(ctx context.Context, key string, loader Cac
 			l.metrics.RecordLoad(ctx)
 
 			v, err := loader(inf.ctx)
+			if err != nil {
+				recordLoadError(l.metrics, inf.ctx)
+			}
 			l.finishInflight(inf, shard, v, err)
 		}()
 	}
@@ -188,13 +191,16 @@ func (l *singleflightLoader[V]) load(ctx context.Context, key string, loader Cac
 	return v, leader, nil
 }
 
-type directLoader[V any] struct{}
+type directLoader[V any] struct {
+	metrics MetricsProvider
+}
 
 var _ internalLoader[any] = directLoader[any]{}
 
-func (directLoader[V]) load(ctx context.Context, key string, loader CacheLoadFunc[V]) (V, bool, error) {
+func (l directLoader[V]) load(ctx context.Context, key string, loader CacheLoadFunc[V]) (V, bool, error) {
 	v, err := loader(ctx)
 	if err != nil {
+		recordLoadError(l.metrics, ctx)
 		var zero V
 
 		return zero, true, err

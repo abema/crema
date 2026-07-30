@@ -93,12 +93,14 @@ func TestSingleflightLoader_LoadsOnce(t *testing.T) {
 	}
 }
 
-func TestSingleflightLoader_SharedWhenConcurrent(t *testing.T) {
+func TestSingleflightLoader_SharedErrorRecordedOnce(t *testing.T) {
 	t.Parallel()
 
-	loaderImpl := newSingleflightLoader[int](NoopMetricsProvider{}, 0)
+	metrics := &countingMetricsProvider{}
+	loaderImpl := newSingleflightLoader[int](metrics, 0)
 	started := make(chan struct{})
 	unblock := make(chan struct{})
+	expectErr := errors.New("loader failed")
 	var calls int32
 	loader := func(context.Context) (int, error) {
 		if atomic.AddInt32(&calls, 1) == 1 {
@@ -106,7 +108,7 @@ func TestSingleflightLoader_SharedWhenConcurrent(t *testing.T) {
 		}
 		<-unblock
 
-		return 99, nil
+		return 0, expectErr
 	}
 
 	type result struct {
@@ -160,11 +162,11 @@ func TestSingleflightLoader_SharedWhenConcurrent(t *testing.T) {
 
 	leaderCount := 0
 	for _, res := range []result{first, second} {
-		if res.err != nil {
-			t.Fatalf("unexpected error: %v", res.err)
+		if res.err != expectErr {
+			t.Fatalf("expected error %v, got %v", expectErr, res.err)
 		}
-		if res.val != 99 {
-			t.Fatalf("expected value 99, got %d", res.val)
+		if res.val != 0 {
+			t.Fatalf("expected zero value, got %d", res.val)
 		}
 		if res.leader {
 			leaderCount++
@@ -172,6 +174,9 @@ func TestSingleflightLoader_SharedWhenConcurrent(t *testing.T) {
 	}
 	if leaderCount != 1 {
 		t.Fatalf("expected exactly one leader, got %d", leaderCount)
+	}
+	if got := atomic.LoadInt32(&metrics.loadErrors); got != 1 {
+		t.Fatalf("expected 1 load error, got %d", got)
 	}
 }
 

@@ -16,6 +16,17 @@ type testMetricsProvider struct {
 	BaseMetricsProvider
 }
 
+type metricsProviderWithoutLoadError struct{}
+
+func (metricsProviderWithoutLoadError) RecordCacheHit(context.Context)             {}
+func (metricsProviderWithoutLoadError) RecordCacheGet(context.Context)             {}
+func (metricsProviderWithoutLoadError) RecordCacheSet(context.Context)             {}
+func (metricsProviderWithoutLoadError) RecordCacheDelete(context.Context)          {}
+func (metricsProviderWithoutLoadError) RecordLoad(context.Context)                 {}
+func (metricsProviderWithoutLoadError) RecordLoadConcurrency(context.Context, int) {}
+
+var _ MetricsProvider = metricsProviderWithoutLoadError{}
+
 type countingMetricsProvider struct {
 	BaseMetricsProvider
 
@@ -131,7 +142,7 @@ func TestCache_GetOrLoadLoaderErrorSkipsCache(t *testing.T) {
 	}
 }
 
-func TestCache_GetOrLoadStaleFallbackReturnsCachedValue(t *testing.T) {
+func TestCache_GetOrLoadRevalidationFallbackReturnsCachedValue(t *testing.T) {
 	t.Parallel()
 
 	provider := &testMemoryProvider[int]{items: make(map[string]CacheObject[int])}
@@ -142,7 +153,8 @@ func TestCache_GetOrLoadStaleFallbackReturnsCachedValue(t *testing.T) {
 	metrics := &countingMetricsProvider{}
 	logs := &bytes.Buffer{}
 	cache := NewCache(provider, NoopCacheStorageCodec[int]{},
-		WithStaleFallback[int, CacheObject[int]](true),
+		WithRevalidationFallback[int, CacheObject[int]](true),
+		WithDirectLoader[int, CacheObject[int]](),
 		WithMetricsProvider[int, CacheObject[int]](metrics),
 		WithLogger[int, CacheObject[int]](slog.New(slog.NewTextHandler(logs, &slog.HandlerOptions{Level: slog.LevelWarn}))),
 	)
@@ -172,7 +184,7 @@ func TestCache_GetOrLoadStaleFallbackReturnsCachedValue(t *testing.T) {
 	}
 }
 
-func TestCache_GetOrLoadStaleFallbackExpiredReturnsError(t *testing.T) {
+func TestCache_GetOrLoadRevalidationFallbackExpiredReturnsError(t *testing.T) {
 	t.Parallel()
 
 	provider := &testMemoryProvider[int]{items: make(map[string]CacheObject[int])}
@@ -182,7 +194,7 @@ func TestCache_GetOrLoadStaleFallbackExpiredReturnsError(t *testing.T) {
 	}
 	metrics := &countingMetricsProvider{}
 	cache := NewCache(provider, NoopCacheStorageCodec[int]{},
-		WithStaleFallback[int, CacheObject[int]](true),
+		WithRevalidationFallback[int, CacheObject[int]](true),
 		WithMetricsProvider[int, CacheObject[int]](metrics),
 	)
 	impl := cache.(*cacheImpl[int, CacheObject[int]])
@@ -203,7 +215,59 @@ func TestCache_GetOrLoadStaleFallbackExpiredReturnsError(t *testing.T) {
 	}
 }
 
-func TestCache_GetOrLoadStaleFallbackEnabledByDefault(t *testing.T) {
+func TestCache_GetOrLoadRevalidationFallbackExpiresDuringLoad(t *testing.T) {
+	t.Parallel()
+
+	provider := &testMemoryProvider[int]{items: map[string]CacheObject[int]{
+		"answer": {Value: 42, ExpireAtMillis: 2000},
+	}}
+	cache := NewCache(provider, NoopCacheStorageCodec[int]{})
+	impl := cache.(*cacheImpl[int, CacheObject[int]])
+	var nowMillis atomic.Int64
+	nowMillis.Store(1000)
+	impl.now = func() time.Time { return time.UnixMilli(nowMillis.Load()) }
+	impl.random = fakeRandom(0)
+
+	expectErr := errors.New("loader failed")
+	value, err := cache.GetOrLoad(context.Background(), "answer", time.Second, func(context.Context) (int, error) {
+		nowMillis.Store(2000)
+
+		return 0, expectErr
+	})
+	if err != expectErr {
+		t.Fatalf("expected error %v, got %v", expectErr, err)
+	}
+	if value != 0 {
+		t.Fatalf("expected zero value, got %d", value)
+	}
+}
+
+func TestCache_GetOrLoadRevalidationFallbackPropagatesCancellation(t *testing.T) {
+	t.Parallel()
+
+	provider := &testMemoryProvider[int]{items: map[string]CacheObject[int]{
+		"answer": {Value: 42, ExpireAtMillis: 2000},
+	}}
+	cache := NewCache(provider, NoopCacheStorageCodec[int]{}, WithDirectLoader[int, CacheObject[int]]())
+	impl := cache.(*cacheImpl[int, CacheObject[int]])
+	impl.now = func() time.Time { return time.UnixMilli(1000) }
+	impl.random = fakeRandom(0)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	value, err := cache.GetOrLoad(ctx, "answer", time.Second, func(context.Context) (int, error) {
+		cancel()
+
+		return 0, context.Canceled
+	})
+	if err != context.Canceled {
+		t.Fatalf("expected context cancellation, got %v", err)
+	}
+	if value != 0 {
+		t.Fatalf("expected zero value, got %d", value)
+	}
+}
+
+func TestCache_GetOrLoadRevalidationFallbackEnabledByDefault(t *testing.T) {
 	t.Parallel()
 
 	provider := &testMemoryProvider[int]{items: make(map[string]CacheObject[int])}
@@ -227,7 +291,7 @@ func TestCache_GetOrLoadStaleFallbackEnabledByDefault(t *testing.T) {
 	}
 }
 
-func TestCache_GetOrLoadStaleFallbackDisabledPropagatesError(t *testing.T) {
+func TestCache_GetOrLoadRevalidationFallbackDisabledPropagatesError(t *testing.T) {
 	t.Parallel()
 
 	provider := &testMemoryProvider[int]{items: make(map[string]CacheObject[int])}
@@ -235,7 +299,7 @@ func TestCache_GetOrLoadStaleFallbackDisabledPropagatesError(t *testing.T) {
 		Value:          42,
 		ExpireAtMillis: 2000,
 	}
-	cache := NewCache(provider, NoopCacheStorageCodec[int]{}, WithStaleFallback[int, CacheObject[int]](false))
+	cache := NewCache(provider, NoopCacheStorageCodec[int]{}, WithRevalidationFallback[int, CacheObject[int]](false))
 	impl := cache.(*cacheImpl[int, CacheObject[int]])
 	impl.now = func() time.Time { return time.UnixMilli(1000) }
 	impl.random = fakeRandom(0)
@@ -497,8 +561,12 @@ func TestWithMetricsProvider_WithDirectLoader(t *testing.T) {
 	if impl.metrics != metrics {
 		t.Fatalf("expected custom metrics provider to be set")
 	}
-	if _, ok := impl.internalLoader.(directLoader[int]); !ok {
+	loader, ok := impl.internalLoader.(directLoader[int])
+	if !ok {
 		t.Fatalf("expected internal loader to be directLoader")
+	}
+	if loader.metrics != metrics {
+		t.Fatalf("expected loader metrics to be set")
 	}
 }
 

@@ -34,7 +34,7 @@ type cacheImpl[V any, S any] struct {
 	steepness                      float64
 	revalidationWindowMilliseconds int64
 	maxLoadTimeout                 time.Duration
-	staleFallback                  bool
+	revalidationFallback           bool
 	random                         func() float64 // must goroutine safe
 }
 
@@ -70,8 +70,12 @@ func WithMetricsProvider[V any, S any](metrics MetricsProvider) CacheOption[V, S
 			metrics = NoopMetricsProvider{}
 		}
 		c.metrics = metrics
-		if loader, ok := c.internalLoader.(*singleflightLoader[V]); ok {
+		switch loader := c.internalLoader.(type) {
+		case *singleflightLoader[V]:
 			loader.metrics = metrics
+		case directLoader[V]:
+			loader.metrics = metrics
+			c.internalLoader = loader
 		}
 	}
 }
@@ -79,7 +83,7 @@ func WithMetricsProvider[V any, S any](metrics MetricsProvider) CacheOption[V, S
 // WithDirectLoader disables singleflight and calls loaders directly.
 func WithDirectLoader[V any, S any]() CacheOption[V, S] {
 	return func(c *cacheImpl[V, S]) {
-		c.internalLoader = directLoader[V]{}
+		c.internalLoader = directLoader[V]{metrics: c.metrics}
 	}
 }
 
@@ -105,14 +109,11 @@ func WithMaxLoadTimeout[V any, S any](duration time.Duration) CacheOption[V, S] 
 	}
 }
 
-// WithStaleFallback controls whether GetOrLoad returns the value it already
-// holds when a revalidation load fails. It applies only while the held value
-// has not expired yet; a load failure without a valid value still returns the
-// loader error. It is enabled by default, so pass false to always propagate
-// loader errors.
-func WithStaleFallback[V any, S any](enabled bool) CacheOption[V, S] {
+// WithRevalidationFallback controls whether GetOrLoad returns a still-valid
+// cached value when revalidation fails. It is enabled by default.
+func WithRevalidationFallback[V any, S any](enabled bool) CacheOption[V, S] {
 	return func(c *cacheImpl[V, S]) {
-		c.staleFallback = enabled
+		c.revalidationFallback = enabled
 	}
 }
 
@@ -131,7 +132,7 @@ func NewCache[V any, S any](provider CacheProvider[S], codec CacheStorageCodec[V
 		steepness:                      steepness,
 		revalidationWindowMilliseconds: revalidationWindowMilliseconds,
 		maxLoadTimeout:                 0,
-		staleFallback:                  true,
+		revalidationFallback:           true,
 	}
 	for _, opt := range opts {
 		if opt == nil {
@@ -198,14 +199,10 @@ func (c *cacheImpl[V, S]) GetOrLoad(ctx context.Context, key string, ttl time.Du
 	if found && !c.shouldRevalidate(nowMillis, value.ExpireAtMillis) {
 		return value.Value, nil
 	}
-	// The load is revalidation driven only while the held value is still valid,
-	// so a fully expired (or missing) entry is never used as a fallback.
-	canFallback := c.staleFallback && found && value.ExpireAtMillis > nowMillis
 
 	v, leader, err := c.internalLoader.load(ctx, key, loader)
 	if err != nil {
-		c.metrics.RecordLoadError(ctx)
-		if canFallback {
+		if c.canFallback(ctx, found, value) {
 			c.logger.Warn("failed to load, falling back to cached value", slog.String("key", key), slog.String("error", err.Error()))
 
 			return value.Value, nil
@@ -225,6 +222,13 @@ func (c *cacheImpl[V, S]) GetOrLoad(ctx context.Context, key string, ttl time.Du
 	}
 
 	return v, nil
+}
+
+func (c *cacheImpl[V, S]) canFallback(ctx context.Context, found bool, value CacheObject[V]) bool {
+	return ctx.Err() == nil &&
+		c.revalidationFallback &&
+		found &&
+		value.ExpireAtMillis > c.now().UnixMilli()
 }
 
 // shouldRevalidate returns true if the entry is expired, or if the remaining
