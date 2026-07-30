@@ -241,7 +241,7 @@ func (p *Provider) Get(ctx context.Context, key string) ([]byte, bool, error) {
 	}
 	if !acquired {
 		p.removeIfSame(key, item)
-		p.finalize(item)
+		p.retire(item)
 		if reclaimed {
 			p.stats.reclaimedMisses.Add(1)
 		} else {
@@ -394,7 +394,7 @@ func (p *Provider) Purge() error {
 	}
 
 	p.clearExpirations()
-	for _, item := range p.drainIndex(0) {
+	for _, item := range p.drainIndex() {
 		p.retire(item)
 	}
 
@@ -625,7 +625,7 @@ func (p *Provider) releaseExtent(item *cacheEntry) {
 	if item.state != entryLive {
 		item.mu.Unlock()
 
-		p.finalize(item)
+		p.finalizeExtent(item)
 
 		return
 	}
@@ -633,6 +633,11 @@ func (p *Provider) releaseExtent(item *cacheEntry) {
 	item.mu.Unlock()
 }
 
+// retire marks item for removal and frees it once no reader holds a reference.
+//
+// It is also the tail of a failed acquire: acquire leaves the entry in a
+// non-live state, so retiring it there frees it as soon as its last reader
+// leaves.
 func (p *Provider) retire(item *cacheEntry) {
 	if item.kind == allocationSmall {
 		p.retireSmall(item)
@@ -651,18 +656,8 @@ func (p *Provider) retireExtent(item *cacheEntry) {
 	ready := item.refs == 0
 	item.mu.Unlock()
 	if ready {
-		p.finalize(item)
+		p.finalizeExtent(item)
 	}
-}
-
-func (p *Provider) finalize(item *cacheEntry) {
-	if item.kind == allocationSmall {
-		p.retireSmall(item)
-
-		return
-	}
-
-	p.finalizeExtent(item)
 }
 
 func (p *Provider) finalizeExtent(item *cacheEntry) {
@@ -743,11 +738,7 @@ func (p *Provider) nextGeneration() uint64 {
 }
 
 func (p *Provider) shard(key string) *indexShard {
-	var hash maphash.Hash
-	hash.SetSeed(p.hashSeed)
-	_, _ = hash.WriteString(key)
-
-	return &p.shards[hash.Sum64()%uint64(len(p.shards))]
+	return &p.shards[maphash.String(p.hashSeed, key)%uint64(len(p.shards))]
 }
 
 func (p *Provider) lookup(key string) *cacheEntry {
@@ -805,9 +796,9 @@ func (p *Provider) removeIfSame(key string, expected *cacheEntry) bool {
 	return true
 }
 
-func (p *Provider) drainIndex(limit int64) []*cacheEntry {
+// drainIndex removes every indexed entry and returns them for retirement.
+func (p *Provider) drainIndex() []*cacheEntry {
 	var result []*cacheEntry
-	var reserved int64
 	for shardIndex := range p.shards {
 		shard := &p.shards[shardIndex]
 		shard.mu.Lock()
@@ -815,18 +806,11 @@ func (p *Provider) drainIndex(limit int64) []*cacheEntry {
 			wakeExpiry := p.cancelExpiry(item)
 			delete(shard.entries, key)
 			result = append(result, item)
-			reserved += int64(item.pageCount) * int64(p.pageSize)
 			if wakeExpiry {
 				p.wakeExpiryLoop()
 			}
-			if limit > 0 && reserved >= limit {
-				break
-			}
 		}
 		shard.mu.Unlock()
-		if limit > 0 && reserved >= limit {
-			break
-		}
 	}
 
 	return result
