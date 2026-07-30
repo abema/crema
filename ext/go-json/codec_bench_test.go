@@ -32,6 +32,7 @@ func BenchmarkJSONByteStringCodecEncode(b *testing.B) {
 	}
 
 	b.Run("std", func(b *testing.B) {
+		b.ReportAllocs()
 		for i := 0; i < b.N; i++ {
 			if _, err := std.Encode(*input); err != nil {
 				b.Fatalf("encode failed: %v", err)
@@ -40,6 +41,7 @@ func BenchmarkJSONByteStringCodecEncode(b *testing.B) {
 	})
 
 	b.Run("go-json", func(b *testing.B) {
+		b.ReportAllocs()
 		for i := 0; i < b.N; i++ {
 			if _, err := fast.Encode(*input); err != nil {
 				b.Fatalf("encode failed: %v", err)

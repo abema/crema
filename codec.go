@@ -54,14 +54,52 @@ var (
 	_ BufferEncoder[any]             = JSONByteStringCodec[any]{}
 )
 
+type jsonEncodeBuffer struct {
+	buf *bytes.Buffer
+	enc *json.Encoder
+}
+
+const maxPooledJSONEncodeBufferBytes = 64 << 10
+
+var jsonEncodeBufferPool = sync.Pool{
+	New: func() any {
+		buf := bytes.NewBuffer(nil)
+		enc := json.NewEncoder(buf)
+		enc.SetEscapeHTML(false)
+
+		return &jsonEncodeBuffer{buf: buf, enc: enc}
+	},
+}
+
+func acquireJSONEncodeBuffer() *jsonEncodeBuffer {
+	eb := jsonEncodeBufferPool.Get().(*jsonEncodeBuffer)
+	eb.buf.Reset()
+
+	return eb
+}
+
+func releaseJSONEncodeBuffer(eb *jsonEncodeBuffer) {
+	if eb.buf.Cap() > maxPooledJSONEncodeBufferBytes {
+		return
+	}
+	eb.buf.Reset()
+	jsonEncodeBufferPool.Put(eb)
+}
+
 // Encode marshals the cache object into JSON bytes without a trailing newline.
 func (j JSONByteStringCodec[V]) Encode(value CacheObject[V]) ([]byte, error) {
-	buf := bytes.NewBuffer(nil)
-	if err := j.EncodeTo(buf, value); err != nil {
+	eb := acquireJSONEncodeBuffer()
+	defer releaseJSONEncodeBuffer(eb)
+	if err := eb.enc.Encode(value); err != nil {
 		return nil, err
 	}
 
-	return buf.Bytes(), nil
+	encoded := eb.buf.Bytes()
+	if len(encoded) > 0 && encoded[len(encoded)-1] == '\n' {
+		encoded = encoded[:len(encoded)-1]
+	}
+
+	return bytes.Clone(encoded), nil
 }
 
 // EncodeTo appends the cache object as JSON bytes to buf without a trailing newline.
