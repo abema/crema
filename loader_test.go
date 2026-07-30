@@ -119,14 +119,14 @@ func TestSingleflightLoader_SharedErrorRecordedOnce(t *testing.T) {
 	results := make(chan result, 2)
 
 	go func() {
-		val, leader, err := loaderImpl.load(context.Background(), "key", loader)
+		val, leader, err := loaderImpl.load(context.Background(), "key", LoadReasonMiss, loader)
 		results <- result{val: val, leader: leader, err: err}
 	}()
 
 	<-started
 
 	go func() {
-		val, leader, err := loaderImpl.load(context.Background(), "key", loader)
+		val, leader, err := loaderImpl.load(context.Background(), "key", LoadReasonMiss, loader)
 		results <- result{val: val, leader: leader, err: err}
 	}()
 
@@ -198,7 +198,7 @@ func TestSingleflightLoader_ContextDone(t *testing.T) {
 
 	leaderErrCh := make(chan error, 1)
 	go func() {
-		_, _, err := loaderImpl.load(context.Background(), "key", loader)
+		_, _, err := loaderImpl.load(context.Background(), "key", LoadReasonMiss, loader)
 		leaderErrCh <- err
 	}()
 
@@ -209,7 +209,7 @@ func TestSingleflightLoader_ContextDone(t *testing.T) {
 	followerValCh := make(chan int, 1)
 	followerLeaderCh := make(chan bool, 1)
 	go func() {
-		value, leader, err := loaderImpl.load(ctx, "key", loader)
+		value, leader, err := loaderImpl.load(ctx, "key", LoadReasonMiss, loader)
 		followerValCh <- value
 		followerLeaderCh <- leader
 		followerErrCh <- err
@@ -267,7 +267,7 @@ func TestSingleflightLoader_LeaderContextDoneDoesNotBlock(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	errCh := make(chan error, 1)
 	go func() {
-		_, _, err := loaderImpl.load(ctx, "key", loader)
+		_, _, err := loaderImpl.load(ctx, "key", LoadReasonMiss, loader)
 		errCh <- err
 	}()
 
@@ -382,7 +382,7 @@ func TestSingleflightLoader_PropagatesLoaderError(t *testing.T) {
 		return 0, expectErr
 	}
 
-	got, leader, err := loaderImpl.load(context.Background(), "key", loader)
+	got, leader, err := loaderImpl.load(context.Background(), "key", LoadReasonMiss, loader)
 	if err != expectErr {
 		t.Fatalf("expected error %v, got %v", expectErr, err)
 	}
@@ -406,7 +406,7 @@ func TestSingleflightLoader_LoadTimesOut(t *testing.T) {
 		return 0, ctx.Err()
 	}
 
-	_, leader, err := loaderImpl.load(context.Background(), "key", loader)
+	_, leader, err := loaderImpl.load(context.Background(), "key", LoadReasonMiss, loader)
 	if err != context.DeadlineExceeded {
 		t.Fatalf("expected deadline exceeded, got %v", err)
 	}
@@ -431,7 +431,7 @@ func TestSingleflightLoader_NewInflightNoTimeout(t *testing.T) {
 		return 1, nil
 	}
 
-	got, leader, err := loaderImpl.load(context.Background(), "key", loader)
+	got, leader, err := loaderImpl.load(context.Background(), "key", LoadReasonMiss, loader)
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -451,8 +451,8 @@ func TestDirectLoader_LoadSuccess(t *testing.T) {
 		return 7, nil
 	}
 
-	impl := directLoader[int]{}
-	got, leader, err := impl.load(ctx, "key", loader)
+	impl := directLoader[int]{metrics: NoopMetricsProvider{}}
+	got, leader, err := impl.load(ctx, "key", LoadReasonMiss, loader)
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -473,8 +473,8 @@ func TestDirectLoader_LoadError(t *testing.T) {
 		return 0, expectErr
 	}
 
-	impl := directLoader[int]{}
-	got, leader, err := impl.load(ctx, "key", loader)
+	impl := directLoader[int]{metrics: NoopMetricsProvider{}}
+	got, leader, err := impl.load(ctx, "key", LoadReasonMiss, loader)
 	if err != expectErr {
 		t.Fatalf("expected error %v, got %v", expectErr, err)
 	}
@@ -497,8 +497,8 @@ func TestDirectLoader_LoadUsesContext(t *testing.T) {
 		return value, nil
 	}
 
-	impl := directLoader[string]{}
-	got, leader, err := impl.load(ctx, "key", loader)
+	impl := directLoader[string]{metrics: NoopMetricsProvider{}}
+	got, leader, err := impl.load(ctx, "key", LoadReasonMiss, loader)
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}

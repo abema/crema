@@ -47,6 +47,8 @@ type CacheObject[V any] struct {
 }
 
 // CacheLoadFunc loads a value when it is missing or needs revalidation.
+// Load latency is not measured by the cache; wrap this function to report it to
+// your APM.
 type CacheLoadFunc[V any] func(ctx context.Context) (V, error)
 
 // CacheOption configures a Cache instance.
@@ -195,12 +197,20 @@ func (c *cacheImpl[V, S]) GetOrLoad(ctx context.Context, key string, ttl time.Du
 		c.logger.Warn("failed to get from cache", slog.String("key", key), slog.String("error", err.Error()))
 		found = false
 	}
-	nowMillis := c.now().UnixMilli()
-	if found && !c.shouldRevalidate(nowMillis, value.ExpireAtMillis) {
-		return value.Value, nil
+	reason := LoadReasonMiss
+	if found {
+		nowMillis := c.now().UnixMilli()
+		switch {
+		case value.ExpireAtMillis <= nowMillis:
+			reason = LoadReasonExpired
+		case c.shouldRevalidate(nowMillis, value.ExpireAtMillis):
+			reason = LoadReasonRevalidation
+		default:
+			return value.Value, nil
+		}
 	}
 
-	v, leader, err := c.internalLoader.load(ctx, key, loader)
+	v, leader, err := c.internalLoader.load(ctx, key, reason, loader)
 	if err != nil {
 		if c.canFallback(ctx, found, value) {
 			c.logger.Warn("failed to load, falling back to cached value", slog.String("key", key), slog.String("error", err.Error()))

@@ -20,7 +20,7 @@ var (
 )
 
 type internalLoader[V any] interface {
-	load(ctx context.Context, key string, loader CacheLoadFunc[V]) (V, bool, error)
+	load(ctx context.Context, key string, reason LoadReason, loader CacheLoadFunc[V]) (V, bool, error)
 }
 
 type inflight[V any] struct {
@@ -156,11 +156,12 @@ func (l *singleflightLoader[V]) releaseInflight(key string, inf *inflight[V], sh
 	shard.mu.Unlock()
 }
 
-func (l *singleflightLoader[V]) load(ctx context.Context, key string, loader CacheLoadFunc[V]) (V, bool, error) {
+func (l *singleflightLoader[V]) load(ctx context.Context, key string, reason LoadReason, loader CacheLoadFunc[V]) (V, bool, error) {
 	inf, leader, shard := l.acquireInflight(ctx, key)
 	if leader {
 		go func() {
-			l.metrics.RecordLoad(ctx)
+			l.metrics.RecordLoad(inf.ctx)
+			recordLoadReason(l.metrics, inf.ctx, reason)
 
 			v, err := loader(inf.ctx)
 			if err != nil {
@@ -197,14 +198,19 @@ type directLoader[V any] struct {
 
 var _ internalLoader[any] = directLoader[any]{}
 
-func (l directLoader[V]) load(ctx context.Context, key string, loader CacheLoadFunc[V]) (V, bool, error) {
+func (l directLoader[V]) load(ctx context.Context, _ string, reason LoadReason, loader CacheLoadFunc[V]) (V, bool, error) {
+	l.metrics.RecordLoad(ctx)
+	recordLoadReason(l.metrics, ctx, reason)
+
 	v, err := loader(ctx)
 	if err != nil {
 		recordLoadError(l.metrics, ctx)
+		l.metrics.RecordLoadConcurrency(ctx, 1)
 		var zero V
 
 		return zero, true, err
 	}
+	l.metrics.RecordLoadConcurrency(ctx, 1)
 
 	return v, true, nil
 }

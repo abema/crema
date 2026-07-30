@@ -22,7 +22,7 @@ func BenchmarkLoader(b *testing.B) {
 		{
 			name: "direct",
 			newLoader: func() internalLoader[int] {
-				return directLoader[int]{}
+				return directLoader[int]{metrics: NoopMetricsProvider{}}
 			},
 		},
 	}
@@ -51,7 +51,7 @@ func BenchmarkLoader(b *testing.B) {
 
 									return len(key), nil
 								}
-								if _, _, err := loader.load(ctx, key, loadFunc); err != nil {
+								if _, _, err := loader.load(ctx, key, LoadReasonMiss, loadFunc); err != nil {
 									b.Fatal(err)
 								}
 							}

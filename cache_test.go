@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -14,6 +15,46 @@ import (
 
 type testMetricsProvider struct {
 	BaseMetricsProvider
+
+	loads       atomic.Int64
+	loadErrors  atomic.Int64
+	mu          sync.Mutex
+	reasons     []LoadReason
+	concurrency []int
+}
+
+func (m *testMetricsProvider) RecordLoad(context.Context) {
+	m.loads.Add(1)
+}
+
+func (m *testMetricsProvider) RecordLoadError(context.Context) {
+	m.loadErrors.Add(1)
+}
+
+func (m *testMetricsProvider) RecordLoadReason(_ context.Context, reason LoadReason) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.reasons = append(m.reasons, reason)
+}
+
+func (m *testMetricsProvider) RecordLoadConcurrency(_ context.Context, concurrency int) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.concurrency = append(m.concurrency, concurrency)
+}
+
+func (m *testMetricsProvider) recordedReasons() []LoadReason {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	return append([]LoadReason(nil), m.reasons...)
+}
+
+func (m *testMetricsProvider) recordedConcurrency() []int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	return append([]int(nil), m.concurrency...)
 }
 
 type metricsProviderWithoutLoadError struct{}
@@ -139,6 +180,100 @@ func TestCache_GetOrLoadLoaderErrorSkipsCache(t *testing.T) {
 	}
 	if _, ok := provider.items["answer"]; ok {
 		t.Fatalf("expected no cache entry when loader fails")
+	}
+}
+
+func TestCache_GetOrLoadRecordsLoadReason(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		entry      *CacheObject[int]
+		random     float64
+		wantLoads  int64
+		wantReason LoadReason
+	}{
+		{name: "miss", wantLoads: 1, wantReason: LoadReasonMiss},
+		{
+			name:       "expired",
+			entry:      &CacheObject[int]{Value: 1, ExpireAtMillis: 900},
+			wantLoads:  1,
+			wantReason: LoadReasonExpired,
+		},
+		{
+			name:       "revalidation",
+			entry:      &CacheObject[int]{Value: 1, ExpireAtMillis: 1100},
+			random:     0,
+			wantLoads:  1,
+			wantReason: LoadReasonRevalidation,
+		},
+		{
+			name:   "fresh",
+			entry:  &CacheObject[int]{Value: 1, ExpireAtMillis: 2000},
+			random: 1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			provider := &testMemoryProvider[int]{items: make(map[string]CacheObject[int])}
+			if tt.entry != nil {
+				provider.items["answer"] = *tt.entry
+			}
+			metrics := &testMetricsProvider{}
+			cache := NewCache(
+				provider,
+				NoopCacheStorageCodec[int]{},
+				WithMetricsProvider[int, CacheObject[int]](metrics),
+			)
+			impl := cache.(*cacheImpl[int, CacheObject[int]])
+			impl.now = func() time.Time { return time.UnixMilli(1000) }
+			impl.random = fakeRandom(tt.random)
+
+			if _, err := cache.GetOrLoad(context.Background(), "answer", time.Second, func(context.Context) (int, error) {
+				return 42, nil
+			}); err != nil {
+				t.Fatalf("get or load: %v", err)
+			}
+
+			if got := metrics.loads.Load(); got != tt.wantLoads {
+				t.Fatalf("loads = %d, want %d", got, tt.wantLoads)
+			}
+			reasons := metrics.recordedReasons()
+			if tt.wantLoads == 0 {
+				if len(reasons) != 0 {
+					t.Fatalf("reasons = %v, want none", reasons)
+				}
+
+				return
+			}
+			if len(reasons) != 1 || reasons[0] != tt.wantReason {
+				t.Fatalf("reasons = %v, want [%v]", reasons, tt.wantReason)
+			}
+		})
+	}
+}
+
+func TestCache_GetOrLoadRecordsLoadError(t *testing.T) {
+	t.Parallel()
+
+	metrics := &testMetricsProvider{}
+	cache := NewCache(
+		&testMemoryProvider[int]{items: make(map[string]CacheObject[int])},
+		NoopCacheStorageCodec[int]{},
+		WithMetricsProvider[int, CacheObject[int]](metrics),
+	)
+	expectErr := errors.New("loader failed")
+
+	if _, err := cache.GetOrLoad(context.Background(), "answer", time.Second, func(context.Context) (int, error) {
+		return 0, expectErr
+	}); err != expectErr {
+		t.Fatalf("expected error %v, got %v", expectErr, err)
+	}
+	if got := metrics.loadErrors.Load(); got != 1 {
+		t.Fatalf("load errors = %d, want 1", got)
 	}
 }
 

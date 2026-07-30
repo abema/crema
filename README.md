@@ -135,6 +135,14 @@ func main() {
 | BaseMetricsProvider | `github.com/abema/crema` | Embeddable no-op base for custom metrics providers. | - |
 | NoopMetricsProvider | `github.com/abema/crema` | Default metrics provider; records nothing. | - |
 
+Recorded events are cache get/hit/set/delete, load, load reason
+(`miss` / `expired` / `revalidation`), load error, and load concurrency.
+Embed `BaseMetricsProvider` in your implementation so that methods added to
+`MetricsProvider` in future releases do not break your build.
+
+Load latency is intentionally not recorded; wrap your `CacheLoadFunc` to report
+it to your APM.
+
 ## Concurrency
 
 `Cache` is goroutine-safe as long as its `CacheProvider` and
