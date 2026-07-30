@@ -17,6 +17,9 @@ type MetricsProvider interface {
 	RecordLoad(ctx context.Context)
 	// RecordLoadConcurrency is called when a load finishes with the inflight count.
 	RecordLoadConcurrency(ctx context.Context, concurrency int)
+	// RecordLoadError is called when a load fails, including when the failure is
+	// absorbed by the stale fallback.
+	RecordLoadError(ctx context.Context)
 }
 
 type BaseMetricsProvider struct{}
@@ -27,6 +30,7 @@ func (BaseMetricsProvider) RecordCacheSet(context.Context)             {}
 func (BaseMetricsProvider) RecordCacheDelete(context.Context)          {}
 func (BaseMetricsProvider) RecordLoad(context.Context)                 {}
 func (BaseMetricsProvider) RecordLoadConcurrency(context.Context, int) {}
+func (BaseMetricsProvider) RecordLoadError(context.Context)            {}
 
 type NoopMetricsProvider struct {
 	BaseMetricsProvider

@@ -93,12 +93,19 @@ func main() {
   or your own codec.
 - **CacheObject**: A thin wrapper holding `Value` and absolute expiry
   (`ExpireAtMillis`).
+- **Stale fallback**: When a probabilistic revalidation load fails while a
+  still-valid cached value is held, `GetOrLoad` logs a warning, records a load
+  error metric, and returns that cached value instead of the loader error. This
+  is enabled by default; disable it with `WithStaleFallback(false)`. A load
+  failure with no valid cached value (missing or fully expired) always returns
+  the error.
 
 ## Options
 
 - `WithRevalidationWindow(duration)`: Set the revalidation window
 - `WithDirectLoader()`: Disable singleflight and call loaders directly
 - `WithMaxLoadTimeout(duration)`: Set max duration for singleflight loaders (ignored with `WithDirectLoader()`)
+- `WithStaleFallback(enabled)`: Return the still-valid cached value instead of an error when a revalidation load fails (enabled by default; pass `false` to always propagate loader errors)
 - `WithLogger(logger)`: Override warning logger for get/set failures
 - `WithMetricsProvider(metrics)`: Record cache and loader events
 

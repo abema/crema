@@ -1,10 +1,12 @@
 package crema
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
 	"log/slog"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -12,6 +14,16 @@ import (
 
 type testMetricsProvider struct {
 	BaseMetricsProvider
+}
+
+type countingMetricsProvider struct {
+	BaseMetricsProvider
+
+	loadErrors int32
+}
+
+func (m *countingMetricsProvider) RecordLoadError(context.Context) {
+	atomic.AddInt32(&m.loadErrors, 1)
 }
 
 func TestCache_SetSkipsExpired(t *testing.T) {
@@ -116,6 +128,127 @@ func TestCache_GetOrLoadLoaderErrorSkipsCache(t *testing.T) {
 	}
 	if _, ok := provider.items["answer"]; ok {
 		t.Fatalf("expected no cache entry when loader fails")
+	}
+}
+
+func TestCache_GetOrLoadStaleFallbackReturnsCachedValue(t *testing.T) {
+	t.Parallel()
+
+	provider := &testMemoryProvider[int]{items: make(map[string]CacheObject[int])}
+	provider.items["answer"] = CacheObject[int]{
+		Value:          42,
+		ExpireAtMillis: 2000,
+	}
+	metrics := &countingMetricsProvider{}
+	logs := &bytes.Buffer{}
+	cache := NewCache(provider, NoopCacheStorageCodec[int]{},
+		WithStaleFallback[int, CacheObject[int]](true),
+		WithMetricsProvider[int, CacheObject[int]](metrics),
+		WithLogger[int, CacheObject[int]](slog.New(slog.NewTextHandler(logs, &slog.HandlerOptions{Level: slog.LevelWarn}))),
+	)
+	impl := cache.(*cacheImpl[int, CacheObject[int]])
+	impl.now = func() time.Time { return time.UnixMilli(1000) }
+	impl.random = fakeRandom(0)
+
+	expectErr := errors.New("loader failed")
+	value, err := cache.GetOrLoad(context.Background(), "answer", time.Second, func(context.Context) (int, error) {
+		return 0, expectErr
+	})
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if value != 42 {
+		t.Fatalf("expected stale value 42, got %d", value)
+	}
+	if got := atomic.LoadInt32(&metrics.loadErrors); got != 1 {
+		t.Fatalf("expected 1 load error recorded, got %d", got)
+	}
+	if !strings.Contains(logs.String(), "falling back to cached value") {
+		t.Fatalf("expected fallback warning, got %q", logs.String())
+	}
+	stored, ok := provider.items["answer"]
+	if !ok || stored.Value != 42 || stored.ExpireAtMillis != 2000 {
+		t.Fatalf("expected cache entry to be untouched, got %+v (ok=%t)", stored, ok)
+	}
+}
+
+func TestCache_GetOrLoadStaleFallbackExpiredReturnsError(t *testing.T) {
+	t.Parallel()
+
+	provider := &testMemoryProvider[int]{items: make(map[string]CacheObject[int])}
+	provider.items["answer"] = CacheObject[int]{
+		Value:          42,
+		ExpireAtMillis: 900,
+	}
+	metrics := &countingMetricsProvider{}
+	cache := NewCache(provider, NoopCacheStorageCodec[int]{},
+		WithStaleFallback[int, CacheObject[int]](true),
+		WithMetricsProvider[int, CacheObject[int]](metrics),
+	)
+	impl := cache.(*cacheImpl[int, CacheObject[int]])
+	impl.now = func() time.Time { return time.UnixMilli(1000) }
+
+	expectErr := errors.New("loader failed")
+	value, err := cache.GetOrLoad(context.Background(), "answer", time.Second, func(context.Context) (int, error) {
+		return 0, expectErr
+	})
+	if err != expectErr {
+		t.Fatalf("expected error %v, got %v", expectErr, err)
+	}
+	if value != 0 {
+		t.Fatalf("expected zero value, got %d", value)
+	}
+	if got := atomic.LoadInt32(&metrics.loadErrors); got != 1 {
+		t.Fatalf("expected 1 load error recorded, got %d", got)
+	}
+}
+
+func TestCache_GetOrLoadStaleFallbackEnabledByDefault(t *testing.T) {
+	t.Parallel()
+
+	provider := &testMemoryProvider[int]{items: make(map[string]CacheObject[int])}
+	provider.items["answer"] = CacheObject[int]{
+		Value:          42,
+		ExpireAtMillis: 2000,
+	}
+	cache := NewCache(provider, NoopCacheStorageCodec[int]{})
+	impl := cache.(*cacheImpl[int, CacheObject[int]])
+	impl.now = func() time.Time { return time.UnixMilli(1000) }
+	impl.random = fakeRandom(0)
+
+	value, err := cache.GetOrLoad(context.Background(), "answer", time.Second, func(context.Context) (int, error) {
+		return 0, errors.New("loader failed")
+	})
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if value != 42 {
+		t.Fatalf("expected stale value 42, got %d", value)
+	}
+}
+
+func TestCache_GetOrLoadStaleFallbackDisabledPropagatesError(t *testing.T) {
+	t.Parallel()
+
+	provider := &testMemoryProvider[int]{items: make(map[string]CacheObject[int])}
+	provider.items["answer"] = CacheObject[int]{
+		Value:          42,
+		ExpireAtMillis: 2000,
+	}
+	cache := NewCache(provider, NoopCacheStorageCodec[int]{}, WithStaleFallback[int, CacheObject[int]](false))
+	impl := cache.(*cacheImpl[int, CacheObject[int]])
+	impl.now = func() time.Time { return time.UnixMilli(1000) }
+	impl.random = fakeRandom(0)
+
+	expectErr := errors.New("loader failed")
+	value, err := cache.GetOrLoad(context.Background(), "answer", time.Second, func(context.Context) (int, error) {
+		return 0, expectErr
+	})
+	if err != expectErr {
+		t.Fatalf("expected error %v, got %v", expectErr, err)
+	}
+	if value != 0 {
+		t.Fatalf("expected zero value, got %d", value)
 	}
 }
 

@@ -34,6 +34,7 @@ type cacheImpl[V any, S any] struct {
 	steepness                      float64
 	revalidationWindowMilliseconds int64
 	maxLoadTimeout                 time.Duration
+	staleFallback                  bool
 	random                         func() float64 // must goroutine safe
 }
 
@@ -104,6 +105,17 @@ func WithMaxLoadTimeout[V any, S any](duration time.Duration) CacheOption[V, S] 
 	}
 }
 
+// WithStaleFallback controls whether GetOrLoad returns the value it already
+// holds when a revalidation load fails. It applies only while the held value
+// has not expired yet; a load failure without a valid value still returns the
+// loader error. It is enabled by default, so pass false to always propagate
+// loader errors.
+func WithStaleFallback[V any, S any](enabled bool) CacheOption[V, S] {
+	return func(c *cacheImpl[V, S]) {
+		c.staleFallback = enabled
+	}
+}
+
 // NewCache constructs a Cache with defaults and optional overrides.
 func NewCache[V any, S any](provider CacheProvider[S], codec CacheStorageCodec[V, S], opts ...CacheOption[V, S]) Cache[V, S] {
 	steepness, revalidationWindowMilliseconds := calculateSteepnessAndRevalidationWindow(defaultRevalidationWindowMilliseconds)
@@ -119,6 +131,7 @@ func NewCache[V any, S any](provider CacheProvider[S], codec CacheStorageCodec[V
 		steepness:                      steepness,
 		revalidationWindowMilliseconds: revalidationWindowMilliseconds,
 		maxLoadTimeout:                 0,
+		staleFallback:                  true,
 	}
 	for _, opt := range opts {
 		if opt == nil {
@@ -181,12 +194,22 @@ func (c *cacheImpl[V, S]) GetOrLoad(ctx context.Context, key string, ttl time.Du
 		c.logger.Warn("failed to get from cache", slog.String("key", key), slog.String("error", err.Error()))
 		found = false
 	}
-	if found && !c.shouldRevalidate(c.now().UnixMilli(), value.ExpireAtMillis) {
+	nowMillis := c.now().UnixMilli()
+	if found && !c.shouldRevalidate(nowMillis, value.ExpireAtMillis) {
 		return value.Value, nil
 	}
+	// The load is revalidation driven only while the held value is still valid,
+	// so a fully expired (or missing) entry is never used as a fallback.
+	canFallback := c.staleFallback && found && value.ExpireAtMillis > nowMillis
 
 	v, leader, err := c.internalLoader.load(ctx, key, loader)
 	if err != nil {
+		c.metrics.RecordLoadError(ctx)
+		if canFallback {
+			c.logger.Warn("failed to load, falling back to cached value", slog.String("key", key), slog.String("error", err.Error()))
+
+			return value.Value, nil
+		}
 		var zero V
 
 		return zero, err
