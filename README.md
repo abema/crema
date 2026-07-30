@@ -111,6 +111,38 @@ func main() {
 - `WithRevalidationFallback(enabled)`: Enable or disable revalidation fallback (enabled by default)
 - `WithLogger(logger)`: Override warning logger for get/set failures
 - `WithMetricsProvider(metrics)`: Record cache and loader events
+- `WithNegativeCache(ttl)`: Cache load errors for `ttl` (disabled by default)
+- `WithNegativeCacheErrorPredicate(predicate)`: Choose which errors are cached
+
+## Negative Cache
+
+`WithNegativeCache` keeps load errors briefly to suppress repeated loads:
+
+```go
+cache := crema.NewCache(
+	provider,
+	crema.NoopCacheStorageCodec[int]{},
+	crema.WithNegativeCache[int, crema.CacheObject[int]](500*time.Millisecond),
+	crema.WithNegativeCacheErrorPredicate[int, crema.CacheObject[int]](func(err error) bool {
+		return !errors.Is(err, ErrNotFound)
+	}),
+)
+```
+
+- While a negative entry is live, `GetOrLoad` skips the loader and returns the
+  same error, preserving `errors.Is` and `errors.As`.
+- The negative TTL is independent of the value TTL passed to `GetOrLoad`.
+- With the default revalidation fallback, a still-valid value wins over a
+  negative entry.
+- `DefaultNegativeCacheErrorPredicate` caches every error except
+  `context.Canceled` and `context.DeadlineExceeded`.
+- Successful `Set` and `Delete` operations invalidate the negative entry.
+- Errors are held in process memory, never passed to `CacheProvider` or
+  `CacheStorageCodec`, and are not shared across processes.
+- The store has a fixed capacity and may evict entries before their TTL under
+  high key cardinality.
+- Hits and stores are reported via `RecordNegativeCacheHit` and
+  `RecordNegativeCacheSet` on `MetricsProvider`.
 
 ## Implementations
 

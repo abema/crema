@@ -35,6 +35,9 @@ type cacheImpl[V any, S any] struct {
 	revalidationWindowMilliseconds int64
 	maxLoadTimeout                 time.Duration
 	revalidationFallback           bool
+	negativeCache                  *negativeCacheStore
+	negativeCacheTTL               time.Duration
+	negativeCacheErrorPredicate    NegativeCacheErrorPredicate
 	random                         func() float64 // must goroutine safe
 	useDirectLoader                bool
 }
@@ -108,6 +111,34 @@ func WithRevalidationFallback[V any, S any](enabled bool) CacheOption[V, S] {
 	}
 }
 
+// WithNegativeCache caches load errors for the given TTL. It is disabled by
+// default and by non-positive durations. Entries are bounded, best-effort, and
+// stored only in this Cache instance.
+func WithNegativeCache[V any, S any](ttl time.Duration) CacheOption[V, S] {
+	return func(c *cacheImpl[V, S]) {
+		if ttl <= 0 {
+			c.negativeCache = nil
+			c.negativeCacheTTL = 0
+
+			return
+		}
+		if c.negativeCache == nil {
+			c.negativeCache = newNegativeCacheStore()
+		}
+		c.negativeCacheTTL = ttl
+	}
+}
+
+// WithNegativeCacheErrorPredicate overrides which load errors are cached. A nil
+// predicate leaves the current predicate unchanged.
+func WithNegativeCacheErrorPredicate[V any, S any](predicate NegativeCacheErrorPredicate) CacheOption[V, S] {
+	return func(c *cacheImpl[V, S]) {
+		if predicate != nil {
+			c.negativeCacheErrorPredicate = predicate
+		}
+	}
+}
+
 // NewCache constructs a Cache with defaults and optional overrides.
 func NewCache[V any, S any](provider CacheProvider[S], codec CacheStorageCodec[V, S], opts ...CacheOption[V, S]) Cache[V, S] {
 	steepness, revalidationWindowMilliseconds := calculateSteepnessAndRevalidationWindow(defaultRevalidationWindowMilliseconds)
@@ -123,6 +154,7 @@ func NewCache[V any, S any](provider CacheProvider[S], codec CacheStorageCodec[V
 		maxLoadTimeout:                 0,
 		revalidationFallback:           true,
 		useDirectLoader:                false,
+		negativeCacheErrorPredicate:    DefaultNegativeCacheErrorPredicate,
 	}
 	for _, opt := range opts {
 		if opt == nil {
@@ -173,18 +205,33 @@ func (c *cacheImpl[V, S]) Set(ctx context.Context, key string, value CacheObject
 		return nil
 	}
 
-	return c.provider.Set(ctx, key, encoded, ttl)
+	if err := c.provider.Set(ctx, key, encoded, ttl); err != nil {
+		return err
+	}
+	if c.negativeCache != nil {
+		c.negativeCache.invalidate(key)
+	}
+
+	return nil
 }
 
-// Delete removes a cached entry for key.
+// Delete removes a cached entry for key, including any negative cache entry.
 func (c *cacheImpl[V, S]) Delete(ctx context.Context, key string) error {
 	c.metrics.RecordCacheDelete(ctx)
 
-	return c.provider.Delete(ctx, key)
+	if err := c.provider.Delete(ctx, key); err != nil {
+		return err
+	}
+	if c.negativeCache != nil {
+		c.negativeCache.invalidate(key)
+	}
+
+	return nil
 }
 
 // GetOrLoad returns a cached value or uses loader when missing or revalidating.
 func (c *cacheImpl[V, S]) GetOrLoad(ctx context.Context, key string, ttl time.Duration, loader CacheLoadFunc[V]) (V, error) {
+	negativeToken := c.negativeCacheToken(key)
 	reason := LoadReasonMiss
 	value, found, err := c.Get(ctx, key)
 	if err != nil {
@@ -204,7 +251,29 @@ func (c *cacheImpl[V, S]) GetOrLoad(ctx context.Context, key string, ttl time.Du
 		}
 	}
 
-	v, leader, err := c.internalLoader.load(ctx, key, reason, loader)
+	if cachedErr, ok := c.negativeCacheGet(key); ok {
+		c.metrics.RecordNegativeCacheHit(ctx)
+		if c.canFallback(ctx, found, value) {
+			return value.Value, nil
+		}
+		var zero V
+
+		return zero, cachedErr
+	}
+
+	load := loader
+	if c.negativeCache != nil {
+		load = func(loadCtx context.Context) (V, error) {
+			v, err := loader(loadCtx)
+			if err != nil {
+				c.negativeCacheSet(loadCtx, key, err, negativeToken)
+			}
+
+			return v, err
+		}
+	}
+
+	v, leader, err := c.internalLoader.load(ctx, key, reason, load)
 	if err != nil {
 		if c.canFallback(ctx, found, value) {
 			c.logger.Warn("failed to load, falling back to cached value", slog.String("key", key), slog.String("error", err.Error()))
@@ -233,6 +302,38 @@ func (c *cacheImpl[V, S]) canFallback(ctx context.Context, found bool, value Cac
 		c.revalidationFallback &&
 		found &&
 		value.ExpireAtMillis > c.now().UnixMilli()
+}
+
+func (c *cacheImpl[V, S]) negativeCacheGet(key string) (error, bool) {
+	if c.negativeCache == nil {
+		return nil, false
+	}
+
+	return c.negativeCache.get(key, c.now().UnixMilli())
+}
+
+func (c *cacheImpl[V, S]) negativeCacheToken(key string) negativeCacheToken {
+	if c.negativeCache == nil {
+		return negativeCacheToken{}
+	}
+
+	return c.negativeCache.tokenFor(key)
+}
+
+func (c *cacheImpl[V, S]) negativeCacheSet(
+	ctx context.Context,
+	key string,
+	err error,
+	token negativeCacheToken,
+) {
+	if c.negativeCache == nil || ctx.Err() != nil || !c.negativeCacheErrorPredicate(err) {
+		return
+	}
+
+	now := c.now()
+	if c.negativeCache.set(key, err, now.UnixMilli(), now.Add(c.negativeCacheTTL).UnixMilli(), token) {
+		c.metrics.RecordNegativeCacheSet(ctx)
+	}
 }
 
 // shouldRevalidate returns true for expired entries or when a random draw is

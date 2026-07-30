@@ -58,6 +58,10 @@ type MetricsProvider interface {
 	// RecordLoadConcurrency is called when a load finishes with the number of
 	// callers sharing that loader execution.
 	RecordLoadConcurrency(ctx context.Context, concurrency int)
+	// RecordNegativeCacheHit is called when a cached load error suppresses a load.
+	RecordNegativeCacheHit(ctx context.Context)
+	// RecordNegativeCacheSet is called when a load error is stored in the negative cache.
+	RecordNegativeCacheSet(ctx context.Context)
 }
 
 // BaseMetricsProvider is a no-op metrics implementation.
@@ -71,6 +75,8 @@ func (BaseMetricsProvider) RecordLoad(context.Context)                   {}
 func (BaseMetricsProvider) RecordLoadReason(context.Context, LoadReason) {}
 func (BaseMetricsProvider) RecordLoadError(context.Context)              {}
 func (BaseMetricsProvider) RecordLoadConcurrency(context.Context, int)   {}
+func (BaseMetricsProvider) RecordNegativeCacheHit(context.Context)       {}
+func (BaseMetricsProvider) RecordNegativeCacheSet(context.Context)       {}
 
 type NoopMetricsProvider struct {
 	BaseMetricsProvider
