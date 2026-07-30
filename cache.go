@@ -81,7 +81,8 @@ func WithDirectLoader[V any, S any]() CacheOption[V, S] {
 	}
 }
 
-// WithRevalidationWindow sets the target revalidation window duration.
+// WithRevalidationWindow sets how long before expiry probabilistic revalidation starts.
+// A zero duration disables probabilistic revalidation.
 func WithRevalidationWindow[V any, S any](duration time.Duration) CacheOption[V, S] {
 	steepness, revalidationWindowMilliseconds := calculateSteepnessAndRevalidationWindow(duration.Milliseconds())
 
@@ -234,9 +235,9 @@ func (c *cacheImpl[V, S]) canFallback(ctx context.Context, found bool, value Cac
 		value.ExpireAtMillis > c.now().UnixMilli()
 }
 
-// shouldRevalidate returns true if the entry is expired, or if the remaining
-// TTL is within the revalidation window and a random draw falls under the
-// revalidation probability p(t)=1-exp(-steepness*t).
+// shouldRevalidate returns true for expired entries or when a random draw is
+// below p(t)=1-exp(-steepness*(w-t)), where t is the remaining TTL and w is the
+// revalidation window.
 func (c *cacheImpl[V, S]) shouldRevalidate(nowMillis int64, expireAtMillis int64) bool {
 	remainMillis := expireAtMillis - nowMillis
 	if remainMillis <= 0 {
@@ -247,17 +248,17 @@ func (c *cacheImpl[V, S]) shouldRevalidate(nowMillis int64, expireAtMillis int64
 		return false
 	}
 
-	p := 1.0 - math.Exp(-c.steepness*float64(remainMillis))
+	elapsedMillis := c.revalidationWindowMilliseconds - remainMillis
+	p := 1.0 - math.Exp(-c.steepness*float64(elapsedMillis))
 
 	return c.random() < p
 }
 
-// calculateSteepnessAndRevalidationWindow derives the steepness for
-// p(t)=1-exp(-steepness*t) so that p(targetRevalidationWindowMilliseconds)=0.999,
-// then returns the smallest window (in milliseconds) where p(t) reaches 0.995.
+// calculateSteepnessAndRevalidationWindow derives the steepness so the
+// probability approaches 0.999 at expiry. Zero disables revalidation and a
+// negative value selects the default window.
 func calculateSteepnessAndRevalidationWindow(targetRevalidationWindowMilliseconds int64) (float64, int64) {
 	target := 0.999
-	targetThreshold := 0.995
 
 	if targetRevalidationWindowMilliseconds == 0 {
 		return 0, 0
@@ -268,8 +269,6 @@ func calculateSteepnessAndRevalidationWindow(targetRevalidationWindowMillisecond
 	targetMilliseconds := float64(targetRevalidationWindowMilliseconds)
 
 	steepness := -math.Log(1.0-target) / targetMilliseconds
-	tf := -math.Log(1.0-targetThreshold) / steepness
-	revalidationWindowMilliSeconds := int64(math.Ceil(tf))
 
-	return float64(steepness), revalidationWindowMilliSeconds
+	return steepness, targetRevalidationWindowMilliseconds
 }
