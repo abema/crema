@@ -5,13 +5,13 @@ import (
 	"testing"
 	"time"
 
-	dgraphristretto "github.com/dgraph-io/ristretto"
+	dgraphristretto "github.com/dgraph-io/ristretto/v2"
 )
 
-func newTestCache(t *testing.T) *dgraphristretto.Cache {
+func newTestCache(t *testing.T) *dgraphristretto.Cache[string, []byte] {
 	t.Helper()
 
-	cache, err := dgraphristretto.NewCache(&dgraphristretto.Config{
+	cache, err := dgraphristretto.NewCache(&dgraphristretto.Config[string, []byte]{
 		NumCounters: 1e4,
 		MaxCost:     1 << 20,
 		BufferItems: 64,
@@ -108,27 +108,6 @@ func TestRistrettoCacheProvider_TTL(t *testing.T) {
 	}
 	if ok {
 		t.Fatal("expected value to expire")
-	}
-}
-
-func TestRistrettoCacheProvider_UnexpectedType(t *testing.T) {
-	t.Parallel()
-
-	cache := newTestCache(t)
-	provider, err := NewRistrettoCacheProvider[[]byte](cache)
-	if err != nil {
-		t.Fatalf("create provider: %v", err)
-	}
-
-	cache.Set("key", "value", 1)
-	cache.Wait()
-
-	_, ok, err := provider.Get(context.Background(), "key")
-	if err != ErrUnexpectedCacheValueType {
-		t.Fatalf("expected ErrUnexpectedCacheValueType, got %v", err)
-	}
-	if ok {
-		t.Fatal("expected ok=false for unexpected type")
 	}
 }
 

@@ -7,11 +7,11 @@ import (
 
 	"github.com/abema/crema"
 	cremaristretto "github.com/abema/crema/ext/ristretto"
-	dgraphristretto "github.com/dgraph-io/ristretto"
+	dgraphristretto "github.com/dgraph-io/ristretto/v2"
 )
 
 func ExampleRistrettoCacheProvider() {
-	cache, err := dgraphristretto.NewCache(&dgraphristretto.Config{
+	cache, err := dgraphristretto.NewCache(&dgraphristretto.Config[string, crema.CacheObject[string]]{
 		NumCounters: 1e6,
 		MaxCost:     1 << 30,
 		BufferItems: 64,
