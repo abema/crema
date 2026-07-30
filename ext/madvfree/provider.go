@@ -11,6 +11,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"time"
 
 	"github.com/abema/crema"
 )
@@ -54,6 +55,7 @@ type cacheEntry struct {
 	expiresAt      int64
 	expiry         *expiryRecord
 
+	idle  idleState
 	refs  uint32
 	state entryState
 	freed bool
@@ -75,12 +77,14 @@ type counters struct {
 	generationMisses atomic.Uint64
 	expiredMisses    atomic.Uint64
 
-	idleCalls        atomic.Uint64
-	idleErrors       atomic.Uint64
-	reactivateCalls  atomic.Uint64
-	reactivateErrors atomic.Uint64
-	discardCalls     atomic.Uint64
-	discardErrors    atomic.Uint64
+	idleCalls         atomic.Uint64
+	idleErrors        atomic.Uint64
+	idleDeferrals     atomic.Uint64
+	idleCancellations atomic.Uint64
+	reactivateCalls   atomic.Uint64
+	reactivateErrors  atomic.Uint64
+	discardCalls      atomic.Uint64
+	discardErrors     atomic.Uint64
 
 	allocations       atomic.Uint64
 	allocationFails   atomic.Uint64
@@ -122,6 +126,14 @@ type Provider struct {
 	expiryStop  chan struct{}
 	expiryDone  chan struct{}
 
+	idleDelay time.Duration
+	idleMu    sync.Mutex
+	idleQueue []idleCandidate
+	idleHead  int
+	idleWake  chan struct{}
+	idleStop  chan struct{}
+	idleDone  chan struct{}
+
 	stats counters
 }
 
@@ -138,6 +150,9 @@ var _ crema.CacheProvider[[]byte] = (*Provider)(nil)
 func NewProvider(config Config) (*Provider, error) {
 	if config.CapacityBytes < 0 || config.ShardCount < 0 {
 		return nil, fmt.Errorf("%w: capacity and shard count must be non-negative", ErrInvalidConfig)
+	}
+	if config.IdleDelay < 0 {
+		return nil, fmt.Errorf("%w: idle delay must be non-negative", ErrInvalidConfig)
 	}
 
 	backend, err := newBackend(config)
@@ -164,6 +179,13 @@ func NewProvider(config Config) (*Provider, error) {
 	layouts, err := makeSmallPageLayouts(pageSize, config.SizeClasses)
 	if err != nil {
 		return nil, err
+	}
+	idleDelay := config.IdleDelay
+	if idleDelay == 0 {
+		idleDelay = DefaultIdleDelay
+	}
+	if config.DisableIdleDelay {
+		idleDelay = 0
 	}
 
 	arena, err := backend.mapArena(capacity)
@@ -197,8 +219,13 @@ func NewProvider(config Config) (*Provider, error) {
 		expiryWake: make(chan struct{}, 1),
 		expiryStop: make(chan struct{}),
 		expiryDone: make(chan struct{}),
+		idleDelay:  idleDelay,
+		idleWake:   make(chan struct{}, 1),
+		idleStop:   make(chan struct{}),
+		idleDone:   make(chan struct{}),
 	}
 	go provider.expirationLoop()
+	go provider.idleLoop()
 
 	return provider, nil
 }
@@ -348,7 +375,9 @@ func (p *Provider) Set(ctx context.Context, key string, value []byte, ttl time.D
 		p.stats.allocations.Add(1)
 		p.stats.extentAllocations.Add(1)
 
-		p.markIdle(region)
+		item.mu.Lock()
+		p.markIdleExtentLocked(item)
+		item.mu.Unlock()
 	}
 
 	old := p.replace(key, item)
@@ -442,14 +471,17 @@ func (p *Provider) Close() error {
 	if p.closed && p.arena == nil {
 		p.lifecycle.Unlock()
 		<-p.expiryDone
+		<-p.idleDone
 
 		return nil
 	}
 	if !p.closed {
 		p.closed = true
 		close(p.expiryStop)
+		close(p.idleStop)
 	}
 	p.clearExpirations()
+	p.clearIdleQueue()
 
 	for shardIndex := range p.shards {
 		shard := &p.shards[shardIndex]
@@ -472,6 +504,7 @@ func (p *Provider) Close() error {
 	p.allocatorMu.Unlock()
 	p.lifecycle.Unlock()
 	<-p.expiryDone
+	<-p.idleDone
 
 	return result
 }
@@ -497,6 +530,8 @@ func (p *Provider) Stats() Stats {
 		ExpiredMisses:     p.stats.expiredMisses.Load(),
 		IdleCalls:         p.stats.idleCalls.Load(),
 		IdleErrors:        p.stats.idleErrors.Load(),
+		IdleDeferrals:     p.stats.idleDeferrals.Load(),
+		IdleCancellations: p.stats.idleCancellations.Load(),
 		ReactivateCalls:   p.stats.reactivateCalls.Load(),
 		ReactivateErrors:  p.stats.reactivateErrors.Load(),
 		DiscardCalls:      p.stats.discardCalls.Load(),
@@ -539,17 +574,34 @@ func (p *Provider) acquireExtent(item *cacheEntry) (bool, bool, error) {
 }
 
 func (p *Provider) activateAndValidateExtent(item *cacheEntry) (bool, bool, error) {
+	if !item.idle.reclaimable {
+		return p.validateExtent(item)
+	}
 	if p.backend.canReadIdle() {
-		return p.precheckAndActivateExtent(item)
+		reclaimed, valid, err := p.precheckAndActivateExtent(item)
+		if valid {
+			item.idle.reclaimable = false
+		}
+
+		return reclaimed, valid, err
 	}
 
-	return p.activateThenValidateExtent(item)
+	reclaimed, valid, err := p.activateThenValidateExtent(item)
+	if err == nil {
+		item.idle.reclaimable = false
+	}
+
+	return reclaimed, valid, err
 }
 
 func (p *Provider) activateThenValidateExtent(item *cacheEntry) (bool, bool, error) {
 	if err := p.markActive(p.extentBytes(item.startPage, item.pageCount)); err != nil {
 		return false, false, err
 	}
+	return p.validateExtent(item)
+}
+
+func (p *Provider) validateExtent(item *cacheEntry) (bool, bool, error) {
 	for pageIndex := uint32(0); pageIndex < item.pageCount; pageIndex++ {
 		generation, storedIndex := pageHeader(p.page(item.startPage + pageIndex))
 		if generation != item.generation || storedIndex != pageIndex {
@@ -629,8 +681,15 @@ func (p *Provider) releaseExtent(item *cacheEntry) {
 
 		return
 	}
-	p.markIdle(p.extentBytes(item.startPage, item.pageCount))
+	p.markIdleExtentLocked(item)
 	item.mu.Unlock()
+}
+
+func (p *Provider) markIdleExtentLocked(item *cacheEntry) {
+	candidate := idleCandidate{entry: item, startPage: item.startPage}
+	if p.deferIdleLocked(&item.idle, candidate) {
+		p.markIdle(p.extentBytes(item.startPage, item.pageCount))
+	}
 }
 
 func (p *Provider) retire(item *cacheEntry) {

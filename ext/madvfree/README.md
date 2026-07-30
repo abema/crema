@@ -18,7 +18,8 @@ classes use one-page slabs; larger classes use the smallest multi-page slab
 that stores at least two values and reduces reserved bytes per value compared
 with individual extents. A value falls back to a contiguous extent when class
 rounding would lose that saving or no complete slab fits. Larger values always
-use extents. A slab is marked reclaimable only when it has no active readers.
+use extents. A slab is marked reclaimable only when it has no active readers and
+has been idle for `IdleDelay`.
 During `Get` and slot allocation, reclaim is detected per physical page. Only
 slots whose actual payload overlaps a reclaimed page are invalidated; metadata
 for unaffected slots is rebuilt from Go-owned bookkeeping.
@@ -36,11 +37,11 @@ cache := crema.NewCache(provider, crema.JSONByteStringCodec[MyValue]{})
 ```
 
 The zero-value `Config` uses a 64 GiB virtual arena, the default size classes,
-and 64 index shards. Linux also applies `MADV_NOHUGEPAGE` and `MADV_DONTDUMP`;
-macOS has no equivalent per-region advice and ignores those options. Set
-`CapacityBytes`, `SizeClasses`, or `ShardCount` to override their defaults.
-Set `EnableHugePages` or `IncludeInCoreDump` to opt out of the corresponding
-Linux advice.
+64 index shards, and a 10 ms idle delay. Linux also applies `MADV_NOHUGEPAGE`
+and `MADV_DONTDUMP`; macOS has no equivalent per-region advice and ignores those
+options. Set `CapacityBytes`, `SizeClasses`, `ShardCount`, or `IdleDelay` to
+override their defaults. Set `EnableHugePages` or `IncludeInCoreDump` to opt out
+of the corresponding Linux advice.
 
 Lazy backing does not guarantee that the default 64 GiB mapping will succeed.
 A strict Linux overcommit policy, a low `RLIMIT_AS`, or an equivalent container
@@ -61,6 +62,58 @@ may remain higher. Reactivation is different on macOS because
 reactivation failure aborts the current `Get` or `Set` and is returned as an
 error. `Stats.IdleErrors`, `Stats.DiscardErrors`, and
 `Stats.ReactivateErrors` expose these failures.
+
+## Idle hysteresis
+
+An allocation is not marked reclaimable as soon as its last reader releases it.
+Each release records an access, and a background sweeper issues the idle advice
+only after `Config.IdleDelay` has passed without one. Sequential access to the
+same key therefore issues no advice at all, instead of one `MADV_FREE` /
+`MADV_FREE_REUSABLE` plus one re-pin per call.
+
+`IdleDelay` defaults to 10 ms; `DisableIdleDelay` restores marking on every
+release, and a negative `IdleDelay` is rejected with `madvfree.ErrInvalidConfig`.
+
+The trade-off is physical memory retention:
+
+- An unreferenced allocation stays unreclaimable for one delay period after its
+  last access, and for up to two, because the sweeper reschedules a deferral
+  whose region was touched inside the window.
+- An allocation accessed more often than once per delay period is never offered
+  to the kernel while that traffic continues.
+- Nothing else changes: `Delete`, TTL expiration, `Purge`, and `Trim` still
+  discard pages immediately, and the default delay bounds the extra retention to
+  a few milliseconds of idleness, which is short relative to the timescale on
+  which the kernel reclaims lazily freed pages.
+
+Shorten `IdleDelay`, or set `DisableIdleDelay`, when the smallest possible
+unreclaimable window matters more than the system calls. Lengthen it for
+workloads dominated by re-reads of the same keys. `Stats.IdleDeferrals` and
+`Stats.IdleCancellations` report how often the deferral applied and how often it
+was resolved without any advice.
+
+```sh
+go test ./bench -run '^$' -bench '^BenchmarkMADVFreeIdleHysteresis' -benchmem
+```
+
+The benchmark reads one key in a loop and reports the advice calls per
+operation. One reference run:
+
+| Value | `hysteresis` ns/op | `immediate` ns/op |
+| --- | ---: | ---: |
+| 64 B | 224–236 | 3,026–3,703 |
+| 6 KiB | 1,879–1,975 | 4,495–4,736 |
+| 64 KiB | 9,286–13,886 | 15,978–18,754 |
+
+`immediate` reports one `madv-idle/op` and one `repin/op`; `hysteresis` reports
+zero for both, because its one advice pair per 10 ms idle period rounds to zero
+at these rates.
+
+Environment: macOS/arm64 (Apple M4 Max, 16 KiB pages), Go 1.26, 256 MiB
+configured capacity, `-benchtime=1s -count=3` (`-count=5` for 64 KiB), measured
+on 2026-07-30. Linux keeps the `MADV_FREE` system call but re-pins with a page
+write instead of a system call, so its `immediate` baseline is cheaper and the
+relative gain is smaller.
 
 ## Capacity and eviction
 
@@ -87,7 +140,8 @@ released at slab or extent granularity.
 The provider intentionally has no background reclaim scanner. Determining
 whether an idle page was reclaimed requires reactivating it: a write-touch on
 Linux or `MADV_FREE_REUSE` on macOS. Reactivating a page that has not been
-reclaimed removes its reclaimable state.
+reclaimed removes its reclaimable state. The idle sweeper is not such a scanner:
+it only issues the deferred idle advice and never reads or reactivates a region.
 
 ## Comparison benchmarks
 
@@ -124,7 +178,9 @@ One reference run produced the following 6 KiB `Get` results:
 | `ristretto_zero_copy` | 33.72–33.95 | 17 | 1 |
 
 Environment: Linux/arm64, 4 vCPUs, Go 1.25, 256 MiB configured capacity,
-`-benchtime=1s -count=3`, measured on 2026-07-29. The slab layout reserved five
+`-benchtime=1s -count=3`, measured on 2026-07-29 before the idle hysteresis
+existed, so its `madvfree` rows still pay one `MADV_FREE` per `Get`; see
+[Idle hysteresis](#idle-hysteresis). The slab layout reserved five
 4 KiB pages for three 6 KiB values, or about 6.67 KiB per value, compared with
 8 KiB per value for extents. The slab therefore traded lower reserved memory
 for higher `Get` cost in this run. Treat these numbers as an order-of-magnitude

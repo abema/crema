@@ -116,9 +116,12 @@ func TestProbeMADVFreeUnsupported(t *testing.T) {
 }
 
 func TestRuntimeMadviseFailuresAreSoftForExtent(t *testing.T) {
+	// The idle hysteresis is disabled so every failing advice call is observable
+	// without waiting for the deferral sweeper.
 	provider, err := NewProvider(Config{
-		CapacityBytes: unix.Getpagesize() * 8,
-		SizeClasses:   []int{},
+		CapacityBytes:    unix.Getpagesize() * 8,
+		SizeClasses:      []int{},
+		DisableIdleDelay: true,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -261,7 +264,11 @@ func TestSmallSlabPrecheckDoesNotTouchReclaimedPage(t *testing.T) {
 }
 
 func TestRuntimeMadviseFailuresAreSoftForSmallAndTTL(t *testing.T) {
-	provider := newTestProvider(t, 4)
+	provider := newConfiguredTestProvider(t, Config{
+		CapacityBytes:    unix.Getpagesize() * 4,
+		ShardCount:       4,
+		DisableIdleDelay: true,
+	})
 	provider.backend.(injectableBackend).injectMadvise(func([]byte, int) error {
 		return unix.EIO
 	})

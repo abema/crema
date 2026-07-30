@@ -120,9 +120,12 @@ func TestProbeReusableDetectsLostContents(t *testing.T) {
 }
 
 func TestRuntimeAdviceFailureHandlingDarwin(t *testing.T) {
+	// The idle hysteresis is disabled so Set leaves the extent reusable and the
+	// following Get has to reactivate it.
 	provider, err := NewProvider(Config{
-		CapacityBytes: unix.Getpagesize() * 8,
-		SizeClasses:   []int{},
+		CapacityBytes:    unix.Getpagesize() * 8,
+		SizeClasses:      []int{},
+		DisableIdleDelay: true,
 	})
 	if err != nil {
 		t.Fatal(err)

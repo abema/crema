@@ -15,10 +15,18 @@ import (
 
 func newTestProvider(t *testing.T, pages int) *Provider {
 	t.Helper()
-	provider, err := NewProvider(Config{
+
+	return newConfiguredTestProvider(t, Config{
 		CapacityBytes: unix.Getpagesize() * pages,
 		ShardCount:    4,
 	})
+}
+
+// newConfiguredTestProvider creates a provider from config and closes it when the
+// test finishes.
+func newConfiguredTestProvider(t *testing.T, config Config) *Provider {
+	t.Helper()
+	provider, err := NewProvider(config)
 	if err != nil {
 		t.Fatal(err)
 	}

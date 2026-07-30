@@ -33,6 +33,7 @@ type smallPageMeta struct {
 	refs       uint32
 	used       int
 	entries    []*cacheEntry
+	idle       idleState
 }
 
 func (p *Provider) smallClass(length int) (uint16, bool) {
@@ -182,7 +183,7 @@ func (p *Provider) allocateSmallSlot(
 
 	if meta.used >= layout.slotCount {
 		if meta.refs == 0 {
-			p.markIdleSmallSlabLocked(reference.pageID, layout)
+			p.markIdleSmallSlabLocked(meta, reference.pageID, layout)
 		}
 		meta.mu.Unlock()
 
@@ -208,6 +209,7 @@ func (p *Provider) initializeSmallPageLocked(
 	if err := p.markActive(slab); err != nil {
 		return err
 	}
+	meta.idle.reclaimable = false
 	clear(slab)
 	for pageIndex := uint32(0); pageIndex < layout.pageCount; pageIndex++ {
 		page := p.page(pageID + pageIndex)
@@ -288,11 +290,24 @@ func (p *Provider) touchAndValidateSmallSlabPages(
 	meta *smallPageMeta,
 	layout smallPageLayout,
 ) (uint32, error) {
+	if !meta.idle.reclaimable {
+		return p.validateSmallSlabPages(startPage, meta, layout)
+	}
 	if p.backend.canReadIdle() {
-		return p.precheckAndActivateSmallSlabPages(startPage, meta, layout)
+		validPages, err := p.precheckAndActivateSmallSlabPages(startPage, meta, layout)
+		if err == nil && validPages == layout.allPageMask() {
+			meta.idle.reclaimable = false
+		}
+
+		return validPages, err
 	}
 
-	return p.activateThenValidateSmallSlabPages(startPage, meta, layout)
+	validPages, err := p.activateThenValidateSmallSlabPages(startPage, meta, layout)
+	if err == nil {
+		meta.idle.reclaimable = false
+	}
+
+	return validPages, err
 }
 
 func (p *Provider) activateThenValidateSmallSlabPages(
@@ -303,6 +318,14 @@ func (p *Provider) activateThenValidateSmallSlabPages(
 	if err := p.markActive(p.smallSlab(startPage, layout)); err != nil {
 		return 0, err
 	}
+	return p.validateSmallSlabPages(startPage, meta, layout)
+}
+
+func (p *Provider) validateSmallSlabPages(
+	startPage uint32,
+	meta *smallPageMeta,
+	layout smallPageLayout,
+) (uint32, error) {
 	var validPages uint32
 	for pageIndex := uint32(0); pageIndex < layout.pageCount; pageIndex++ {
 		generation, storedIndex := pageHeader(p.page(startPage + pageIndex))
@@ -405,7 +428,7 @@ func (p *Provider) acquireSmall(item *cacheEntry) (bool, bool, error) {
 		// Repair already removed this slot.
 		item.state = entryDead
 		if meta.refs == 0 {
-			p.markIdleSmallSlabLocked(item.startPage, layout)
+			p.markIdleSmallSlabLocked(meta, item.startPage, layout)
 		}
 		meta.mu.Unlock()
 		item.mu.Unlock()
@@ -473,7 +496,7 @@ func (p *Provider) releaseSmall(item *cacheEntry) {
 	}
 
 	if meta.refs == 0 {
-		p.markIdleSmallSlabLocked(item.startPage, p.layouts[item.classID])
+		p.markIdleSmallSlabLocked(meta, item.startPage, p.layouts[item.classID])
 	}
 	meta.mu.Unlock()
 	item.mu.Unlock()
@@ -534,7 +557,7 @@ func (p *Provider) finalizeSmallLocked(item *cacheEntry, meta *smallPageMeta) {
 		meta.state = smallPageDead
 		p.discardSmallSlabLocked(item.startPage, layout)
 	} else if meta.state == smallPageLive && meta.refs == 0 {
-		p.markIdleSmallSlabLocked(item.startPage, layout)
+		p.markIdleSmallSlabLocked(meta, item.startPage, layout)
 	}
 	pageID := item.startPage
 	classID := item.classID
@@ -700,8 +723,15 @@ func (p *Provider) removeSmallPage(
 	p.smallMu.Unlock()
 }
 
-func (p *Provider) markIdleSmallSlabLocked(pageID uint32, layout smallPageLayout) {
-	p.markIdle(p.smallSlab(pageID, layout))
+func (p *Provider) markIdleSmallSlabLocked(
+	meta *smallPageMeta,
+	pageID uint32,
+	layout smallPageLayout,
+) {
+	candidate := idleCandidate{meta: meta, startPage: pageID}
+	if p.deferIdleLocked(&meta.idle, candidate) {
+		p.markIdle(p.smallSlab(pageID, layout))
+	}
 }
 
 func (p *Provider) discardSmallSlabLocked(pageID uint32, layout smallPageLayout) {

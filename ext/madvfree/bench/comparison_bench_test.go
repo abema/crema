@@ -115,6 +115,68 @@ func BenchmarkProviderSetReplacement(b *testing.B) {
 	}
 }
 
+// BenchmarkMADVFreeIdleHysteresis measures repeated Get calls on the same key
+// with and without the deferred idle marking.
+//
+// The reported madv-idle/op and repin/op metrics are the advice calls the
+// provider issued per Get: one pair per call without the hysteresis, and one pair
+// per idle period with it.
+func BenchmarkMADVFreeIdleHysteresis(b *testing.B) {
+	variants := []struct {
+		name   string
+		config madvfree.Config
+	}{
+		{name: "hysteresis", config: madvfree.Config{}},
+		{name: "immediate", config: madvfree.Config{DisableIdleDelay: true}},
+	}
+	for _, size := range []int{64, 6 << 10, 64 << 10} {
+		b.Run(fmt.Sprintf("%dB", size), func(b *testing.B) {
+			value := benchmarkValue(size)
+			for _, variant := range variants {
+				b.Run(variant.name, func(b *testing.B) {
+					benchmarkIdleHysteresis(b, variant.config, value)
+				})
+			}
+		})
+	}
+}
+
+func benchmarkIdleHysteresis(b *testing.B, config madvfree.Config, value []byte) {
+	b.Helper()
+	config.CapacityBytes = comparisonCapacity
+	config.ShardCount = 64
+	provider, err := madvfree.NewProvider(config)
+	if err != nil {
+		b.Fatal(err)
+	}
+	b.Cleanup(func() {
+		if err := provider.Close(); err != nil {
+			b.Errorf("madvfree Close(): %v", err)
+		}
+	})
+	ctx := context.Background()
+	if err := provider.Set(ctx, "key", value, 0); err != nil {
+		b.Fatal(err)
+	}
+	before := provider.Stats()
+
+	b.SetBytes(int64(len(value)))
+	b.ReportAllocs()
+	b.ResetTimer()
+	for range b.N {
+		got, ok, err := provider.Get(ctx, "key")
+		if err != nil || !ok || len(got) != len(value) {
+			b.Fatalf("Get() = (len %d, %v, %v)", len(got), ok, err)
+		}
+	}
+	b.StopTimer()
+
+	after := provider.Stats()
+	operations := float64(b.N)
+	b.ReportMetric(float64(after.IdleCalls-before.IdleCalls)/operations, "madv-idle/op")
+	b.ReportMetric(float64(after.ReactivateCalls-before.ReactivateCalls)/operations, "repin/op")
+}
+
 func benchmarkGetHit(b *testing.B, fixture benchmarkProvider, value []byte) {
 	b.Helper()
 	ctx := context.Background()
