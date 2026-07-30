@@ -2,6 +2,9 @@ package gojson
 
 import (
 	"bytes"
+	"strconv"
+	"strings"
+	"sync"
 	"testing"
 
 	"github.com/abema/crema"
@@ -87,5 +90,56 @@ func TestJSONByteStringCodec_EncodeError(t *testing.T) {
 	_, err := codec.Encode(*input)
 	if err == nil {
 		t.Fatal("expected encode error, got nil")
+	}
+}
+
+func TestJSONByteStringCodec_EncodeConcurrent(t *testing.T) {
+	t.Parallel()
+
+	codec := JSONByteStringCodec[string]{}
+	var wg sync.WaitGroup
+	for i := 0; i < 64; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+
+			value := strings.Repeat(strconv.Itoa(i%10), i)
+			want := `{"Value":"` + value + `","ExpireAtMillis":` + strconv.Itoa(i) + `}`
+			for j := 0; j < 100; j++ {
+				encoded, err := codec.Encode(crema.CacheObject[string]{
+					Value:          value,
+					ExpireAtMillis: int64(i),
+				})
+				if err != nil {
+					t.Errorf("expected encode to succeed, got %v", err)
+
+					return
+				}
+				if string(encoded) != want {
+					t.Errorf("expected encoded %s, got %s", want, encoded)
+
+					return
+				}
+			}
+		}()
+	}
+	wg.Wait()
+}
+
+func TestJSONByteStringCodec_EncodeResultIsNotAliasedByLaterEncode(t *testing.T) {
+	t.Parallel()
+
+	codec := JSONByteStringCodec[string]{}
+	first, err := codec.Encode(crema.CacheObject[string]{Value: "aaaa", ExpireAtMillis: 1})
+	if err != nil {
+		t.Fatalf("expected encode to succeed, got %v", err)
+	}
+	snapshot := string(first)
+
+	if _, err := codec.Encode(crema.CacheObject[string]{Value: "bbbb", ExpireAtMillis: 2}); err != nil {
+		t.Fatalf("expected encode to succeed, got %v", err)
+	}
+	if string(first) != snapshot {
+		t.Fatalf("expected first result to stay %s, got %s", snapshot, first)
 	}
 }
