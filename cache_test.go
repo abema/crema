@@ -705,6 +705,72 @@ func TestWithMetricsProvider_WithDirectLoader(t *testing.T) {
 	}
 }
 
+func TestWithMetricsProvider_BeforeLoaderOptions(t *testing.T) {
+	t.Parallel()
+
+	provider := &testMemoryProvider[int]{items: make(map[string]CacheObject[int])}
+	metrics := &testMetricsProvider{}
+
+	cache := NewCache(
+		provider,
+		NoopCacheStorageCodec[int]{},
+		WithMetricsProvider[int, CacheObject[int]](metrics),
+		WithMaxLoadTimeout[int, CacheObject[int]](time.Minute),
+	)
+	impl := cache.(*cacheImpl[int, CacheObject[int]])
+
+	loader, ok := impl.internalLoader.(*singleflightLoader[int])
+	if !ok {
+		t.Fatalf("expected internal loader to be singleflightLoader")
+	}
+	if loader.metrics != metrics {
+		t.Fatalf("expected loader metrics to be set regardless of option order")
+	}
+	if loader.maxLoadTimeout != time.Minute {
+		t.Fatalf("expected max load timeout to be set, got %v", loader.maxLoadTimeout)
+	}
+}
+
+func TestDirectLoader_RecordsLoadMetrics(t *testing.T) {
+	t.Parallel()
+
+	provider := &testMemoryProvider[int]{items: make(map[string]CacheObject[int])}
+	provider.items["answer"] = CacheObject[int]{
+		Value:          1,
+		ExpireAtMillis: 900,
+	}
+	metrics := &testMetricsProvider{}
+	cache := NewCache(
+		provider,
+		NoopCacheStorageCodec[int]{},
+		WithDirectLoader[int, CacheObject[int]](),
+		WithMetricsProvider[int, CacheObject[int]](metrics),
+	)
+	impl := cache.(*cacheImpl[int, CacheObject[int]])
+	impl.now = func() time.Time { return time.UnixMilli(1000) }
+
+	expectErr := errors.New("loader failed")
+	_, err := cache.GetOrLoad(context.Background(), "answer", time.Second, func(context.Context) (int, error) {
+		return 0, expectErr
+	})
+	if err != expectErr {
+		t.Fatalf("expected error %v, got %v", expectErr, err)
+	}
+
+	if got := metrics.loads.Load(); got != 1 {
+		t.Fatalf("expected 1 load, got %d", got)
+	}
+	if got := metrics.loadErrors.Load(); got != 1 {
+		t.Fatalf("expected 1 load error, got %d", got)
+	}
+	if reasons := metrics.recordedReasons(); len(reasons) != 1 || reasons[0] != LoadReasonExpired {
+		t.Fatalf("expected reasons [%v], got %v", LoadReasonExpired, reasons)
+	}
+	if got := metrics.recordedConcurrency(); len(got) != 1 || got[0] != 1 {
+		t.Fatalf("expected concurrency [1], got %v", got)
+	}
+}
+
 func TestWithMetricsProvider_NilFallsBackToNoop(t *testing.T) {
 	t.Parallel()
 

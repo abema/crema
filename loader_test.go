@@ -451,7 +451,7 @@ func TestDirectLoader_LoadSuccess(t *testing.T) {
 		return 7, nil
 	}
 
-	impl := directLoader[int]{metrics: NoopMetricsProvider{}}
+	impl := newDirectLoader[int](NoopMetricsProvider{})
 	got, leader, err := impl.load(ctx, "key", LoadReasonMiss, loader)
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
@@ -473,7 +473,7 @@ func TestDirectLoader_LoadError(t *testing.T) {
 		return 0, expectErr
 	}
 
-	impl := directLoader[int]{metrics: NoopMetricsProvider{}}
+	impl := newDirectLoader[int](NoopMetricsProvider{})
 	got, leader, err := impl.load(ctx, "key", LoadReasonMiss, loader)
 	if err != expectErr {
 		t.Fatalf("expected error %v, got %v", expectErr, err)
@@ -497,7 +497,7 @@ func TestDirectLoader_LoadUsesContext(t *testing.T) {
 		return value, nil
 	}
 
-	impl := directLoader[string]{metrics: NoopMetricsProvider{}}
+	impl := newDirectLoader[string](NoopMetricsProvider{})
 	got, leader, err := impl.load(ctx, "key", LoadReasonMiss, loader)
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)

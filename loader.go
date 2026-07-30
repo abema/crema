@@ -198,6 +198,10 @@ type directLoader[V any] struct {
 
 var _ internalLoader[any] = directLoader[any]{}
 
+func newDirectLoader[V any](metrics MetricsProvider) directLoader[V] {
+	return directLoader[V]{metrics: metrics}
+}
+
 func (l directLoader[V]) load(ctx context.Context, _ string, reason LoadReason, loader CacheLoadFunc[V]) (V, bool, error) {
 	l.metrics.RecordLoad(ctx)
 	recordLoadReason(l.metrics, ctx, reason)
@@ -205,12 +209,14 @@ func (l directLoader[V]) load(ctx context.Context, _ string, reason LoadReason, 
 	v, err := loader(ctx)
 	if err != nil {
 		recordLoadError(l.metrics, ctx)
-		l.metrics.RecordLoadConcurrency(ctx, 1)
+	}
+	l.metrics.RecordLoadConcurrency(ctx, 1)
+
+	if err != nil {
 		var zero V
 
 		return zero, true, err
 	}
-	l.metrics.RecordLoadConcurrency(ctx, 1)
 
 	return v, true, nil
 }

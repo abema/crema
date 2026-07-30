@@ -137,6 +137,9 @@ func main() {
 
 Recorded events are cache get/hit/set/delete, load, load reason
 (`miss` / `expired` / `revalidation`), load error, and load concurrency.
+Load events are recorded with both the singleflight loader and
+`WithDirectLoader()`; the direct loader never deduplicates, so it always reports
+a load concurrency of 1.
 Embed `BaseMetricsProvider` in your implementation so that methods added to
 `MetricsProvider` in future releases do not break your build.
 

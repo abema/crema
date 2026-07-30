@@ -22,7 +22,7 @@ func BenchmarkLoader(b *testing.B) {
 		{
 			name: "direct",
 			newLoader: func() internalLoader[int] {
-				return directLoader[int]{metrics: NoopMetricsProvider{}}
+				return newDirectLoader[int](NoopMetricsProvider{})
 			},
 		},
 	}
