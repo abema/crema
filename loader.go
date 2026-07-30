@@ -23,6 +23,17 @@ type internalLoader[V any] interface {
 	load(ctx context.Context, key string, loader CacheLoadFunc[V]) (V, bool, error)
 }
 
+// newInternalLoader builds the loader described by settings. It is the single
+// place where the loader kind and the max load timeout are combined, so the
+// order the CacheOptions were given in cannot drop either of them.
+func newInternalLoader[V any](settings *cacheSettings) internalLoader[V] {
+	if settings.directLoader {
+		return newDirectLoader[V](settings.maxLoadTimeout)
+	}
+
+	return newSingleflightLoader[V](settings.metrics, settings.maxLoadTimeout)
+}
+
 type inflight[V any] struct {
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -188,11 +199,25 @@ func (l *singleflightLoader[V]) load(ctx context.Context, key string, loader Cac
 	return v, leader, nil
 }
 
-type directLoader[V any] struct{}
+type directLoader[V any] struct {
+	maxLoadTimeout time.Duration
+}
 
 var _ internalLoader[any] = directLoader[any]{}
 
-func (directLoader[V]) load(ctx context.Context, key string, loader CacheLoadFunc[V]) (V, bool, error) {
+func newDirectLoader[V any](maxLoadTimeout time.Duration) directLoader[V] {
+	return directLoader[V]{maxLoadTimeout: maxLoadTimeout}
+}
+
+// load calls loader directly with the caller context, capped by maxLoadTimeout
+// when it is positive.
+func (l directLoader[V]) load(ctx context.Context, key string, loader CacheLoadFunc[V]) (V, bool, error) {
+	if l.maxLoadTimeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, l.maxLoadTimeout)
+		defer cancel()
+	}
+
 	v, err := loader(ctx)
 	if err != nil {
 		var zero V

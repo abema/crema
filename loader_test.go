@@ -481,6 +481,72 @@ func TestDirectLoader_LoadError(t *testing.T) {
 	}
 }
 
+func TestDirectLoader_LoadTimesOut(t *testing.T) {
+	t.Parallel()
+
+	timeout := 10 * time.Millisecond
+	impl := newDirectLoader[int](timeout)
+	start := time.Now()
+	loader := func(ctx context.Context) (int, error) {
+		<-ctx.Done()
+
+		return 0, ctx.Err()
+	}
+
+	_, leader, err := impl.load(context.Background(), "key", loader)
+	if err != context.DeadlineExceeded {
+		t.Fatalf("expected deadline exceeded, got %v", err)
+	}
+	if !leader {
+		t.Fatalf("expected leader=true, got false")
+	}
+	if time.Since(start) > 200*time.Millisecond {
+		t.Fatalf("expected timeout to fire promptly, took %v", time.Since(start))
+	}
+}
+
+func TestDirectLoader_LoadNoTimeout(t *testing.T) {
+	t.Parallel()
+
+	impl := newDirectLoader[int](0)
+	loader := func(ctx context.Context) (int, error) {
+		if _, ok := ctx.Deadline(); ok {
+			return 0, errors.New("unexpected deadline")
+		}
+
+		return 1, nil
+	}
+
+	got, leader, err := impl.load(context.Background(), "key", loader)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if !leader {
+		t.Fatalf("expected leader=true, got false")
+	}
+	if got != 1 {
+		t.Fatalf("expected value 1, got %d", got)
+	}
+}
+
+func TestDirectLoader_LoadPropagatesCallerCancel(t *testing.T) {
+	t.Parallel()
+
+	impl := newDirectLoader[int](time.Minute)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	loader := func(ctx context.Context) (int, error) {
+		<-ctx.Done()
+
+		return 0, ctx.Err()
+	}
+
+	_, _, err := impl.load(ctx, "key", loader)
+	if err != context.Canceled {
+		t.Fatalf("expected context canceled, got %v", err)
+	}
+}
+
 func TestDirectLoader_LoadUsesContext(t *testing.T) {
 	t.Parallel()
 

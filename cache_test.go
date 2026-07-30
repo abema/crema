@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -411,15 +412,141 @@ func TestWithMaxLoadTimeout_SetsSingleflightTimeout(t *testing.T) {
 	cache := NewCache(provider, NoopCacheStorageCodec[int]{}, WithMaxLoadTimeout[int, CacheObject[int]](timeout))
 	impl := cache.(*cacheImpl[int, CacheObject[int]])
 
-	if impl.maxLoadTimeout != timeout {
-		t.Fatalf("expected maxLoadTimeout %v, got %v", timeout, impl.maxLoadTimeout)
-	}
 	loader, ok := impl.internalLoader.(*singleflightLoader[int])
 	if !ok {
 		t.Fatalf("expected internal loader to be singleflightLoader")
 	}
 	if loader.maxLoadTimeout != timeout {
 		t.Fatalf("expected loader maxLoadTimeout %v, got %v", timeout, loader.maxLoadTimeout)
+	}
+}
+
+func TestWithMaxLoadTimeout_SetsDirectLoaderTimeout(t *testing.T) {
+	t.Parallel()
+
+	provider := &testMemoryProvider[int]{items: make(map[string]CacheObject[int])}
+	timeout := 1500 * time.Millisecond
+	cache := NewCache(
+		provider,
+		NoopCacheStorageCodec[int]{},
+		WithDirectLoader[int, CacheObject[int]](),
+		WithMaxLoadTimeout[int, CacheObject[int]](timeout),
+	)
+	impl := cache.(*cacheImpl[int, CacheObject[int]])
+
+	loader, ok := impl.internalLoader.(directLoader[int])
+	if !ok {
+		t.Fatalf("expected internal loader to be directLoader")
+	}
+	if loader.maxLoadTimeout != timeout {
+		t.Fatalf("expected loader maxLoadTimeout %v, got %v", timeout, loader.maxLoadTimeout)
+	}
+}
+
+type namedCacheOption struct {
+	name   string
+	option CacheOption[int, CacheObject[int]]
+}
+
+// permuteCacheOptions returns every ordering of opts.
+func permuteCacheOptions(opts []namedCacheOption) [][]namedCacheOption {
+	if len(opts) <= 1 {
+		return [][]namedCacheOption{opts}
+	}
+
+	var permutations [][]namedCacheOption
+	for i := range opts {
+		rest := make([]namedCacheOption, 0, len(opts)-1)
+		rest = append(rest, opts[:i]...)
+		rest = append(rest, opts[i+1:]...)
+		for _, tail := range permuteCacheOptions(rest) {
+			permutation := make([]namedCacheOption, 0, len(opts))
+			permutation = append(permutation, opts[i])
+			permutation = append(permutation, tail...)
+			permutations = append(permutations, permutation)
+		}
+	}
+
+	return permutations
+}
+
+// loaderMaxLoadTimeout reports the timeout configured on either loader kind.
+func loaderMaxLoadTimeout(t *testing.T, loader internalLoader[int]) time.Duration {
+	t.Helper()
+
+	switch l := loader.(type) {
+	case *singleflightLoader[int]:
+		return l.maxLoadTimeout
+	case directLoader[int]:
+		return l.maxLoadTimeout
+	default:
+		t.Fatalf("unexpected internal loader type %T", loader)
+
+		return 0
+	}
+}
+
+func TestNewCache_MaxLoadTimeoutIgnoresOptionOrder(t *testing.T) {
+	t.Parallel()
+
+	timeout := 20 * time.Millisecond
+	for _, direct := range []bool{false, true} {
+		opts := []namedCacheOption{
+			{name: "MaxLoadTimeout", option: WithMaxLoadTimeout[int, CacheObject[int]](timeout)},
+			{name: "MetricsProvider", option: WithMetricsProvider[int, CacheObject[int]](&testMetricsProvider{})},
+		}
+		if direct {
+			opts = append(opts, namedCacheOption{
+				name:   "DirectLoader",
+				option: WithDirectLoader[int, CacheObject[int]](),
+			})
+		}
+
+		for _, permutation := range permuteCacheOptions(opts) {
+			names := make([]string, 0, len(permutation))
+			applied := make([]CacheOption[int, CacheObject[int]], 0, len(permutation))
+			for _, opt := range permutation {
+				names = append(names, opt.name)
+				applied = append(applied, opt.option)
+			}
+
+			t.Run(strings.Join(names, "_"), func(t *testing.T) {
+				t.Parallel()
+
+				provider := &testMemoryProvider[int]{items: make(map[string]CacheObject[int])}
+				cache := NewCache(provider, NoopCacheStorageCodec[int]{}, applied...)
+				impl := cache.(*cacheImpl[int, CacheObject[int]])
+
+				if _, ok := impl.internalLoader.(directLoader[int]); ok != direct {
+					t.Fatalf("expected directLoader=%t, got loader type %T", direct, impl.internalLoader)
+				}
+				if got := loaderMaxLoadTimeout(t, impl.internalLoader); got != timeout {
+					t.Fatalf("expected loader maxLoadTimeout %v, got %v", timeout, got)
+				}
+
+				// A loader that only returns once its context is done: GetOrLoad
+				// must come back with the timeout error instead of blocking.
+				loader := func(ctx context.Context) (int, error) {
+					<-ctx.Done()
+
+					return 0, ctx.Err()
+				}
+				errCh := make(chan error, 1)
+				go func() {
+					_, err := cache.GetOrLoad(context.Background(), "key", time.Minute, loader)
+					errCh <- err
+				}()
+
+				select {
+				case err := <-errCh:
+					if !errors.Is(err, context.DeadlineExceeded) {
+						t.Fatalf("expected deadline exceeded, got %v", err)
+					}
+				case <-time.After(2 * time.Second):
+					t.Fatalf("expected maxLoadTimeout to apply, GetOrLoad did not return")
+				}
+			})
+		}
 	}
 }
 

@@ -33,8 +33,19 @@ type cacheImpl[V any, S any] struct {
 	now                            func() time.Time
 	steepness                      float64
 	revalidationWindowMilliseconds int64
-	maxLoadTimeout                 time.Duration
 	random                         func() float64 // must goroutine safe
+}
+
+// cacheSettings holds the values collected from CacheOption before the cache
+// and its internal loader are constructed. Options only record settings here,
+// so the resulting cache never depends on the order the options were given in.
+type cacheSettings struct {
+	logger                         *slog.Logger
+	metrics                        MetricsProvider
+	directLoader                   bool
+	maxLoadTimeout                 time.Duration
+	steepness                      float64
+	revalidationWindowMilliseconds int64
 }
 
 // CacheObject wraps a cached value with its absolute expiration time.
@@ -49,36 +60,33 @@ type CacheObject[V any] struct {
 type CacheLoadFunc[V any] func(ctx context.Context) (V, error)
 
 // CacheOption configures a Cache instance.
-type CacheOption[V any, S any] func(*cacheImpl[V, S])
+type CacheOption[V any, S any] func(*cacheSettings)
 
 const defaultRevalidationWindowMilliseconds = 300000
 
 // WithLogger overrides the default logger used for cache warnings.
 func WithLogger[V any, S any](logger *slog.Logger) CacheOption[V, S] {
-	return func(c *cacheImpl[V, S]) {
+	return func(s *cacheSettings) {
 		if logger != nil {
-			c.logger = logger
+			s.logger = logger
 		}
 	}
 }
 
 // WithMetricsProvider overrides the default metrics provider.
 func WithMetricsProvider[V any, S any](metrics MetricsProvider) CacheOption[V, S] {
-	return func(c *cacheImpl[V, S]) {
+	return func(s *cacheSettings) {
 		if metrics == nil {
 			metrics = NoopMetricsProvider{}
 		}
-		c.metrics = metrics
-		if loader, ok := c.internalLoader.(*singleflightLoader[V]); ok {
-			loader.metrics = metrics
-		}
+		s.metrics = metrics
 	}
 }
 
 // WithDirectLoader disables singleflight and calls loaders directly.
 func WithDirectLoader[V any, S any]() CacheOption[V, S] {
-	return func(c *cacheImpl[V, S]) {
-		c.internalLoader = directLoader[V]{}
+	return func(s *cacheSettings) {
+		s.directLoader = true
 	}
 }
 
@@ -86,48 +94,49 @@ func WithDirectLoader[V any, S any]() CacheOption[V, S] {
 func WithRevalidationWindow[V any, S any](duration time.Duration) CacheOption[V, S] {
 	steepness, revalidationWindowMilliseconds := calculateSteepnessAndRevalidationWindow(duration.Milliseconds())
 
-	return func(c *cacheImpl[V, S]) {
-		c.steepness = steepness
-		c.revalidationWindowMilliseconds = revalidationWindowMilliseconds
+	return func(s *cacheSettings) {
+		s.steepness = steepness
+		s.revalidationWindowMilliseconds = revalidationWindowMilliseconds
 	}
 }
 
 // WithMaxLoadTimeout sets the maximum duration allowed for loader execution.
 // A non-positive duration disables the timeout.
 func WithMaxLoadTimeout[V any, S any](duration time.Duration) CacheOption[V, S] {
-	return func(c *cacheImpl[V, S]) {
-		c.maxLoadTimeout = duration
-		switch loader := c.internalLoader.(type) {
-		case *singleflightLoader[V]:
-			loader.maxLoadTimeout = duration
-		}
+	return func(s *cacheSettings) {
+		s.maxLoadTimeout = duration
 	}
 }
 
 // NewCache constructs a Cache with defaults and optional overrides.
 func NewCache[V any, S any](provider CacheProvider[S], codec CacheStorageCodec[V, S], opts ...CacheOption[V, S]) Cache[V, S] {
 	steepness, revalidationWindowMilliseconds := calculateSteepnessAndRevalidationWindow(defaultRevalidationWindowMilliseconds)
-	metrics := NoopMetricsProvider{}
-	cache := &cacheImpl[V, S]{
-		provider:                       provider,
-		codec:                          codec,
+	settings := &cacheSettings{
 		logger:                         slog.New(noopLogHandler{}),
-		metrics:                        metrics,
-		internalLoader:                 newSingleflightLoader[V](metrics, 0),
-		now:                            time.Now,
-		random:                         rand.Float64,
+		metrics:                        NoopMetricsProvider{},
+		directLoader:                   false,
+		maxLoadTimeout:                 0,
 		steepness:                      steepness,
 		revalidationWindowMilliseconds: revalidationWindowMilliseconds,
-		maxLoadTimeout:                 0,
 	}
 	for _, opt := range opts {
 		if opt == nil {
 			continue
 		}
-		opt(cache)
+		opt(settings)
 	}
 
-	return cache
+	return &cacheImpl[V, S]{
+		provider:                       provider,
+		codec:                          codec,
+		logger:                         settings.logger,
+		metrics:                        settings.metrics,
+		internalLoader:                 newInternalLoader[V](settings),
+		now:                            time.Now,
+		random:                         rand.Float64,
+		steepness:                      settings.steepness,
+		revalidationWindowMilliseconds: settings.revalidationWindowMilliseconds,
+	}
 }
 
 // Get returns the cached entry for key, if present.

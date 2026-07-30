@@ -98,7 +98,7 @@ func main() {
 
 - `WithRevalidationWindow(duration)`: Set the revalidation window
 - `WithDirectLoader()`: Disable singleflight and call loaders directly
-- `WithMaxLoadTimeout(duration)`: Set max duration for singleflight loaders (ignored with `WithDirectLoader()`)
+- `WithMaxLoadTimeout(duration)`: Set max duration for loader execution (applies to both loader kinds; a non-positive duration disables it)
 - `WithLogger(logger)`: Override warning logger for get/set failures
 - `WithMetricsProvider(metrics)`: Record cache and loader events
 
