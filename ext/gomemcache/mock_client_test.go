@@ -69,14 +69,6 @@ func (t *testMemcacheClient) Set(item *memcache.Item) error {
 	return nil
 }
 
-// LastSetTTL returns the expiration value passed to the most recent Set.
-func (t *testMemcacheClient) LastSetTTL() int32 {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-
-	return t.lastSetTTL
-}
-
 func (t *testMemcacheClient) Delete(key string) error {
 	if t.deleteErr != nil {
 		return t.deleteErr
@@ -97,4 +89,11 @@ func (t *testMemcacheClient) Delete(key string) error {
 	delete(t.items, key)
 
 	return nil
+}
+
+func (t *testMemcacheClient) lastSetExpiration() int32 {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	return t.lastSetTTL
 }

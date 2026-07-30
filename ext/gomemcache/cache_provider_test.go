@@ -128,10 +128,7 @@ func TestMemcachedCacheProvider_LongTTLDoesNotExpireImmediately(t *testing.T) {
 		t.Fatalf("set: %v", err)
 	}
 
-	// Set must feed ttlSeconds the real clock. Which of the two representations
-	// wins depends on how close the wall clock is to 2038, so accept either --
-	// but reject anything that is neither, such as a timestamp in the past.
-	switch got := client.LastSetTTL(); {
+	switch got := client.lastSetExpiration(); {
 	case got == maxRelativeExpirationSeconds:
 	case int64(got) > time.Now().Unix():
 	default:
@@ -147,15 +144,12 @@ func TestMemcachedCacheProvider_LongTTLDoesNotExpireImmediately(t *testing.T) {
 	}
 }
 
-func TestTTLSeconds(t *testing.T) {
+func TestMemcachedExpiration(t *testing.T) {
 	t.Parallel()
 
 	const maxRelative = maxRelativeExpirationSeconds
 
-	// base is comfortably before 2038, so absolute timestamps are exact there.
 	base := time.Unix(1_700_000_000, 0)
-	// tieBreak is the instant where the maximum absolute timestamp and a relative
-	// 30-day TTL express exactly the same expiry.
 	tieBreak := time.Unix(math.MaxInt32-maxRelative, 0)
 
 	tests := []struct {
@@ -210,8 +204,6 @@ func TestTTLSeconds(t *testing.T) {
 			want: math.MaxInt32,
 		},
 		{
-			// A tie: both representations land on the same instant, so either is
-			// equally accurate and the absolute maximum is returned.
 			name: "absolute maximum still reaches thirty days out",
 			ttl:  100 * 365 * 24 * time.Hour,
 			now:  tieBreak,
@@ -241,13 +233,12 @@ func TestTTLSeconds(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			got := ttlSeconds(tt.ttl, tt.now)
+			got := memcachedExpiration(tt.ttl, tt.now)
 			if got != tt.want {
-				t.Fatalf("ttlSeconds(%v, %d) = %d, want %d", tt.ttl, tt.now.Unix(), got, tt.want)
+				t.Fatalf("memcachedExpiration(%v, %d) = %d, want %d", tt.ttl, tt.now.Unix(), got, tt.want)
 			}
-			// Whatever the representation, the entry must never be born expired.
 			if got > maxRelative && int64(got) <= tt.now.Unix() {
-				t.Fatalf("ttlSeconds(%v, %d) = %d, which is already in the past", tt.ttl, tt.now.Unix(), got)
+				t.Fatalf("memcachedExpiration(%v, %d) = %d, which is already in the past", tt.ttl, tt.now.Unix(), got)
 			}
 		})
 	}
