@@ -23,6 +23,13 @@ type BufferReleasePolicy interface {
 	CanReleaseBufferOnDecode() bool
 }
 
+// BufferEncoder encodes a cache object into a caller-provided buffer.
+// On error, EncodeTo must restore buf's original length.
+type BufferEncoder[V any] interface {
+	// EncodeTo appends the encoded cache object to buf.
+	EncodeTo(buf *bytes.Buffer, value CacheObject[V]) error
+}
+
 // NoopCacheStorageCodec passes CacheObject values through without encoding.
 type NoopCacheStorageCodec[V any] struct{}
 
@@ -44,22 +51,34 @@ type JSONByteStringCodec[V any] struct{}
 var (
 	_ CacheStorageCodec[any, []byte] = JSONByteStringCodec[any]{}
 	_ BufferReleasePolicy            = JSONByteStringCodec[any]{}
+	_ BufferEncoder[any]             = JSONByteStringCodec[any]{}
 )
 
 // Encode marshals the cache object into JSON bytes without a trailing newline.
 func (j JSONByteStringCodec[V]) Encode(value CacheObject[V]) ([]byte, error) {
 	buf := bytes.NewBuffer(nil)
+	if err := j.EncodeTo(buf, value); err != nil {
+		return nil, err
+	}
+
+	return buf.Bytes(), nil
+}
+
+// EncodeTo appends the cache object as JSON bytes to buf without a trailing newline.
+func (j JSONByteStringCodec[V]) EncodeTo(buf *bytes.Buffer, value CacheObject[V]) error {
+	offset := buf.Len()
 	enc := json.NewEncoder(buf)
 	enc.SetEscapeHTML(false)
 	if err := enc.Encode(value); err != nil {
-		return nil, err
+		buf.Truncate(offset)
+
+		return err
 	}
-	b := buf.Bytes()
-	if len(b) > 0 && b[len(b)-1] == '\n' {
-		b = b[:len(b)-1]
+	if b := buf.Bytes(); len(b) > offset && b[len(b)-1] == '\n' {
+		buf.Truncate(buf.Len() - 1)
 	}
 
-	return b, nil
+	return nil
 }
 
 // Decode unmarshals JSON bytes into a cache object.
@@ -92,6 +111,7 @@ var (
 
 type binaryCompressionCodec[V any] struct {
 	inner                    CacheStorageCodec[V, []byte]
+	innerBufferEncoder       BufferEncoder[V]
 	compressThresholdBytes   int
 	bufPool                  sync.Pool
 	canReleaseBufferOnDecode bool
@@ -110,9 +130,11 @@ func NewBinaryCompressionCodec[V any](
 	if policy, ok := any(inner).(BufferReleasePolicy); ok {
 		canReleaseBufferOnDecode = policy.CanReleaseBufferOnDecode()
 	}
+	innerBufferEncoder, _ := any(inner).(BufferEncoder[V])
 
 	return &binaryCompressionCodec[V]{
 		inner:                  inner,
+		innerBufferEncoder:     innerBufferEncoder,
 		compressThresholdBytes: compressThresholdBytes,
 		bufPool: sync.Pool{
 			New: func() any {
@@ -124,11 +146,15 @@ func NewBinaryCompressionCodec[V any](
 }
 
 func (b *binaryCompressionCodec[V]) Encode(value CacheObject[V]) ([]byte, error) {
+	if b.innerBufferEncoder != nil {
+		return b.encodeViaBuffer(value)
+	}
+
 	innerBuf, err := b.inner.Encode(value)
 	if err != nil {
 		return nil, err
 	}
-	if b.compressThresholdBytes < 0 || len(innerBuf) < b.compressThresholdBytes {
+	if b.skipCompression(len(innerBuf)) {
 		buf := make([]byte, 1+len(innerBuf))
 		buf[0] = CompressionTypeIDNone
 		copy(buf[1:], innerBuf)
@@ -136,19 +162,39 @@ func (b *binaryCompressionCodec[V]) Encode(value CacheObject[V]) ([]byte, error)
 		return buf, nil
 	}
 
-	// compressBuf MUST NOT be used outside of this function scope
+	return b.compress(innerBuf)
+}
+
+func (b *binaryCompressionCodec[V]) encodeViaBuffer(value CacheObject[V]) ([]byte, error) {
+	innerBuf := b.acquireBuffer()
+	defer b.returnBuffer(innerBuf)
+
+	innerBuf.WriteByte(CompressionTypeIDNone)
+	if err := b.innerBufferEncoder.EncodeTo(innerBuf, value); err != nil {
+		return nil, err
+	}
+	encoded := innerBuf.Bytes()
+	if b.skipCompression(len(encoded) - 1) {
+		return bytes.Clone(encoded), nil
+	}
+
+	return b.compress(encoded[1:])
+}
+
+func (b *binaryCompressionCodec[V]) compress(data []byte) ([]byte, error) {
 	compressBuf := b.acquireBuffer()
 	defer b.returnBuffer(compressBuf)
 
-	if err := compressZlib(compressBuf, innerBuf); err != nil {
+	compressBuf.WriteByte(CompressionTypeIDZlib)
+	if err := compressZlib(compressBuf, data); err != nil {
 		return nil, err
 	}
 
-	buf := make([]byte, 1+compressBuf.Len())
-	buf[0] = CompressionTypeIDZlib
-	copy(buf[1:], compressBuf.Bytes())
+	return bytes.Clone(compressBuf.Bytes()), nil
+}
 
-	return buf, nil
+func (b *binaryCompressionCodec[V]) skipCompression(innerLen int) bool {
+	return b.compressThresholdBytes < 0 || innerLen < b.compressThresholdBytes
 }
 
 func (b *binaryCompressionCodec[V]) Decode(data []byte) (CacheObject[V], error) {
@@ -190,8 +236,22 @@ func (b *binaryCompressionCodec[V]) returnBuffer(buf *bytes.Buffer) {
 	b.bufPool.Put(buf)
 }
 
+// zlibWriterPool avoids allocating a deflate state for every Encode call.
+var zlibWriterPool = sync.Pool{
+	New: func() any {
+		return zlib.NewWriter(nil)
+	},
+}
+
 func compressZlib(buf *bytes.Buffer, data []byte) error {
-	writer := zlib.NewWriter(buf)
+	writer := zlibWriterPool.Get().(*zlib.Writer)
+	defer func() {
+		// drop the reference to buf so that it can be released independently
+		writer.Reset(nil)
+		zlibWriterPool.Put(writer)
+	}()
+
+	writer.Reset(buf)
 	if _, err := writer.Write(data); err != nil {
 		_ = writer.Close()
 
