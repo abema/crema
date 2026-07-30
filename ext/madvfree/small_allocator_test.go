@@ -212,6 +212,88 @@ func TestSmallAllocatorReclaimInvalidatesWholePage(t *testing.T) {
 	}
 }
 
+func TestSmallAllocatorSlotOwnershipMismatchPanics(t *testing.T) {
+	provider := newTestProvider(t, 4)
+	if err := provider.Set(context.Background(), "key", []byte("value"), 0); err != nil {
+		t.Fatal(err)
+	}
+	item := provider.lookup("key")
+	meta := item.smallMeta
+	slot := int(item.slot)
+	meta.mu.Lock()
+	meta.entries[slot] = nil
+	meta.mu.Unlock()
+
+	assertAcquireSmallPanics(
+		t,
+		provider,
+		item,
+		"madvfree: small entry slot ownership mismatch",
+		func() {
+			meta.entries[slot] = item
+		},
+	)
+}
+
+func TestSmallAllocatorPhysicalSlotMismatchPanics(t *testing.T) {
+	provider := newTestProvider(t, 4)
+	if err := provider.Set(context.Background(), "key", []byte("value"), 0); err != nil {
+		t.Fatal(err)
+	}
+	item := provider.lookup("key")
+	layout := provider.layouts[item.classID]
+	slab := provider.smallSlab(item.startPage, layout)
+	if err := provider.markActive(slab); err != nil {
+		t.Fatal(err)
+	}
+	if !layout.setSlotAllocated(slab, int(item.slot), false) {
+		t.Fatal("failed to corrupt slot bitmap")
+	}
+	provider.markIdle(slab)
+
+	assertAcquireSmallPanics(
+		t,
+		provider,
+		item,
+		"madvfree: small slot metadata mismatch",
+		func() {
+			if !layout.setSlotAllocated(slab, int(item.slot), true) {
+				panic("failed to restore slot bitmap")
+			}
+		},
+	)
+}
+
+func assertAcquireSmallPanics(
+	t *testing.T,
+	provider *Provider,
+	item *cacheEntry,
+	want string,
+	restoreLocked func(),
+) {
+	t.Helper()
+	defer func() {
+		recovered := recover()
+		if recovered == nil {
+			t.Fatal("acquireSmall did not panic")
+		}
+		restoreLocked()
+		item.smallMeta.mu.Unlock()
+		item.mu.Unlock()
+		if got := fmt.Sprint(recovered); got != want {
+			t.Fatalf("panic = %q, want %q", got, want)
+		}
+	}()
+
+	reclaimed, acquired, err := provider.acquireSmall(item)
+	t.Fatalf(
+		"acquireSmall returned (reclaimed=%v, acquired=%v, err=%v), want panic",
+		reclaimed,
+		acquired,
+		err,
+	)
+}
+
 func TestMultiPageSlabPacksSixKiBValues(t *testing.T) {
 	provider := newTestProvider(t, 64)
 	size, layout := multiPageValueSize(t, provider)
@@ -251,6 +333,79 @@ func TestMultiPageSlabPacksSixKiBValues(t *testing.T) {
 	first := provider.lookup("medium-0")
 	if first.pageCount != layout.pageCount {
 		t.Fatalf("entry pages=%d, want %d", first.pageCount, layout.pageCount)
+	}
+}
+
+func TestMultiPageSlabPartialReclaimOfRequestedSlotIsCleaned(t *testing.T) {
+	provider := newTestProvider(t, 64)
+	size, layout := multiPageValueSize(t, provider)
+	items := make([]*cacheEntry, layout.slotCount)
+	for slot := range layout.slotCount {
+		key := fmt.Sprintf("medium-%d", slot)
+		if err := provider.Set(context.Background(), key, bytes.Repeat([]byte{byte(slot + 1)}, size), 0); err != nil {
+			t.Fatal(err)
+		}
+		items[slot] = provider.lookup(key)
+	}
+
+	target := items[0]
+	targetPages, valid := layout.slotPayloadPageMask(int(target.slot), target.length)
+	if !valid {
+		t.Fatal("target payload page mask is invalid")
+	}
+	var reclaimedOffset uint32
+	foundPartialPage := false
+	for pageOffset := uint32(0); pageOffset < layout.pageCount; pageOffset++ {
+		pageMask := uint32(1) << pageOffset
+		if targetPages&pageMask == 0 {
+			continue
+		}
+		for _, item := range items[1:] {
+			payloadPages, maskValid := layout.slotPayloadPageMask(int(item.slot), item.length)
+			if maskValid && payloadPages&pageMask == 0 {
+				reclaimedOffset = pageOffset
+				foundPartialPage = true
+
+				break
+			}
+		}
+		if foundPartialPage {
+			break
+		}
+	}
+	if !foundPartialPage {
+		t.Fatalf("layout has no target page that preserves another slot: %#v", layout)
+	}
+	reclaimedMask := uint32(1) << reclaimedOffset
+	if err := simulateReclaim(provider.page(target.startPage + reclaimedOffset)); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, found, err := provider.Get(context.Background(), target.key); err != nil || found {
+		t.Fatalf("Get(target) after payload reclaim = (_, %v, %v), want miss", found, err)
+	}
+
+	wantUsed := 0
+	for slot, item := range items {
+		payloadPages, maskValid := layout.slotPayloadPageMask(int(item.slot), item.length)
+		if !maskValid {
+			t.Fatalf("slot %d payload page mask is invalid", slot)
+		}
+		indexed := provider.lookup(item.key) != nil
+		if payloadPages&reclaimedMask != 0 {
+			if indexed {
+				t.Fatalf("reclaimed slot %q remained indexed", item.key)
+			}
+
+			continue
+		}
+		wantUsed++
+		if !indexed {
+			t.Fatalf("unaffected slot %q was removed", item.key)
+		}
+	}
+	if got := target.smallMeta.used; got != wantUsed {
+		t.Fatalf("small used = %d, want %d", got, wantUsed)
 	}
 }
 

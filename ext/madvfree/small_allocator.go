@@ -288,18 +288,58 @@ func (p *Provider) touchAndValidateSmallSlabPages(
 	meta *smallPageMeta,
 	layout smallPageLayout,
 ) (uint32, error) {
-	// Re-pin the whole slab, then read each page header. Reclaimed pages return
-	// zeroes, so their generation no longer matches meta.generation.
+	if p.backend.canReadIdle() {
+		return p.precheckAndActivateSmallSlabPages(startPage, meta, layout)
+	}
+
+	return p.activateThenValidateSmallSlabPages(startPage, meta, layout)
+}
+
+func (p *Provider) activateThenValidateSmallSlabPages(
+	startPage uint32,
+	meta *smallPageMeta,
+	layout smallPageLayout,
+) (uint32, error) {
 	if err := p.markActive(p.smallSlab(startPage, layout)); err != nil {
 		return 0, err
 	}
 	var validPages uint32
 	for pageIndex := uint32(0); pageIndex < layout.pageCount; pageIndex++ {
-		page := p.page(startPage + pageIndex)
-		if binary.LittleEndian.Uint64(page[generationOffset:pageIndexOffset]) == meta.generation &&
-			binary.LittleEndian.Uint32(page[pageIndexOffset:touchOffset]) == pageIndex {
+		generation, storedIndex := pageHeader(p.page(startPage + pageIndex))
+		if generation == meta.generation && storedIndex == pageIndex {
 			validPages |= uint32(1) << pageIndex
 		}
+	}
+
+	return validPages, nil
+}
+
+func (p *Provider) precheckAndActivateSmallSlabPages(
+	startPage uint32,
+	meta *smallPageMeta,
+	layout smallPageLayout,
+) (uint32, error) {
+	var validPages uint32
+	activated := false
+	for pageIndex := uint32(0); pageIndex < layout.pageCount; pageIndex++ {
+		page := p.page(startPage + pageIndex)
+		generation := pageGeneration(page)
+		if generation != meta.generation {
+			continue
+		}
+		if err := p.reactivate(page); err != nil {
+			return 0, err
+		}
+		activated = true
+
+		// Revalidate after write-touch to close the read/reclaim race.
+		generation, storedIndex := pageHeader(page)
+		if generation == meta.generation && storedIndex == pageIndex {
+			validPages |= uint32(1) << pageIndex
+		}
+	}
+	if activated {
+		p.stats.reactivateCalls.Add(1)
 	}
 
 	return validPages, nil
@@ -361,8 +401,9 @@ func (p *Provider) acquireSmall(item *cacheEntry) (bool, bool, error) {
 		}
 	}
 
-	slot := int(item.slot)
-	if slot >= len(meta.entries) || meta.entries[slot] != item {
+	if containsCacheEntry(stale, item) {
+		// Partial slab repair already removed this slot and decremented used.
+		// Complete the stale-item cleanup only after dropping both locks.
 		item.state = entryDead
 		if meta.refs == 0 {
 			p.markIdleSmallSlabLocked(item.startPage, layout)
@@ -370,9 +411,13 @@ func (p *Provider) acquireSmall(item *cacheEntry) (bool, bool, error) {
 		meta.mu.Unlock()
 		item.mu.Unlock()
 		p.cleanupStaleSmall(stale)
-		p.finalizeStaleSmall(item)
 
 		return reclaimed, false, nil
+	}
+
+	slot := int(item.slot)
+	if slot >= len(meta.entries) || meta.entries[slot] != item {
+		panic("madvfree: small entry slot ownership mismatch")
 	}
 	allocated, valid := layout.slotAllocated(slab, slot)
 	slotGeneration, generationValid := layout.slotGeneration(slab, slot)
@@ -383,16 +428,7 @@ func (p *Provider) acquireSmall(item *cacheEntry) (bool, bool, error) {
 		slotGeneration != item.slotGeneration ||
 		!lengthValid ||
 		int(length) != item.length {
-		item.state = entryDead
-		if meta.refs == 0 {
-			p.markIdleSmallSlabLocked(item.startPage, layout)
-		}
-		meta.mu.Unlock()
-		item.mu.Unlock()
-		p.cleanupStaleSmall(stale)
-		p.finalizeStaleSmall(item)
-
-		return reclaimed, false, nil
+		panic("madvfree: small slot metadata mismatch")
 	}
 
 	item.refs++
@@ -402,6 +438,16 @@ func (p *Provider) acquireSmall(item *cacheEntry) (bool, bool, error) {
 	p.cleanupStaleSmall(stale)
 
 	return false, true, nil
+}
+
+func containsCacheEntry(entries []*cacheEntry, target *cacheEntry) bool {
+	for _, item := range entries {
+		if item == target {
+			return true
+		}
+	}
+
+	return false
 }
 
 func (p *Provider) copyFromSmall(destination []byte, item *cacheEntry) {
