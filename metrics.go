@@ -13,6 +13,8 @@ const (
 	// LoadReasonRevalidation indicates that the cached entry was still valid but
 	// was picked up by probabilistic revalidation.
 	LoadReasonRevalidation
+	// LoadReasonGetError indicates that reading or decoding the cached entry failed.
+	LoadReasonGetError
 )
 
 // String returns a stable, metric-friendly name for the reason.
@@ -24,6 +26,8 @@ func (r LoadReason) String() string {
 		return "expired"
 	case LoadReasonRevalidation:
 		return "revalidation"
+	case LoadReasonGetError:
+		return "get_error"
 	default:
 		return "unknown"
 	}
@@ -35,8 +39,7 @@ func (r LoadReason) String() string {
 // Load latency is intentionally not reported here; wrap your CacheLoadFunc to
 // measure it with your APM.
 //
-// Embed BaseMetricsProvider so that methods added to this interface in future
-// releases do not break your implementation.
+// Embed BaseMetricsProvider to implement only the callbacks you need.
 type MetricsProvider interface {
 	// RecordCacheHit is called when a cached value is successfully returned.
 	RecordCacheHit(ctx context.Context)
@@ -48,26 +51,13 @@ type MetricsProvider interface {
 	RecordCacheDelete(ctx context.Context)
 	// RecordLoad is called when a load is started by the leader.
 	RecordLoad(ctx context.Context)
+	// RecordLoadReason is called with the reason that triggered the load.
+	RecordLoadReason(ctx context.Context, reason LoadReason)
+	// RecordLoadError is called once when a loader execution fails.
+	RecordLoadError(ctx context.Context)
 	// RecordLoadConcurrency is called when a load finishes with the number of
 	// callers sharing that loader execution.
 	RecordLoadConcurrency(ctx context.Context, concurrency int)
-}
-
-// LoadReasonMetricsProvider optionally records why loads were triggered.
-type LoadReasonMetricsProvider interface {
-	MetricsProvider
-
-	// RecordLoadReason is called once per loader execution.
-	RecordLoadReason(ctx context.Context, reason LoadReason)
-}
-
-// LoadErrorMetricsProvider optionally records loader failures.
-type LoadErrorMetricsProvider interface {
-	MetricsProvider
-
-	// RecordLoadError is called once per failed loader execution, including
-	// failures absorbed by revalidation fallback.
-	RecordLoadError(ctx context.Context)
 }
 
 // BaseMetricsProvider is a no-op metrics implementation.
@@ -84,16 +74,4 @@ func (BaseMetricsProvider) RecordLoadConcurrency(context.Context, int)   {}
 
 type NoopMetricsProvider struct {
 	BaseMetricsProvider
-}
-
-func recordLoadError(metrics MetricsProvider, ctx context.Context) {
-	if metrics, ok := metrics.(LoadErrorMetricsProvider); ok {
-		metrics.RecordLoadError(ctx)
-	}
-}
-
-func recordLoadReason(metrics MetricsProvider, ctx context.Context, reason LoadReason) {
-	if metrics, ok := metrics.(LoadReasonMetricsProvider); ok {
-		metrics.RecordLoadReason(ctx, reason)
-	}
 }

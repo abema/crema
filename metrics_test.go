@@ -12,6 +12,7 @@ func TestLoadReason_String(t *testing.T) {
 		{reason: LoadReasonMiss, want: "miss"},
 		{reason: LoadReasonExpired, want: "expired"},
 		{reason: LoadReasonRevalidation, want: "revalidation"},
+		{reason: LoadReasonGetError, want: "get_error"},
 		{reason: LoadReason(99), want: "unknown"},
 	}
 	for _, tt := range tests {
@@ -36,11 +37,7 @@ func TestBaseMetricsProvider_ImplementsMetricsProvider(t *testing.T) {
 	provider.RecordCacheSet(ctx)
 	provider.RecordCacheDelete(ctx)
 	provider.RecordLoad(ctx)
+	provider.RecordLoadReason(ctx, LoadReasonRevalidation)
+	provider.RecordLoadError(ctx)
 	provider.RecordLoadConcurrency(ctx, 1)
-
-	var reasonProvider LoadReasonMetricsProvider = NoopMetricsProvider{}
-	reasonProvider.RecordLoadReason(ctx, LoadReasonRevalidation)
-
-	var errorProvider LoadErrorMetricsProvider = NoopMetricsProvider{}
-	errorProvider.RecordLoadError(ctx)
 }

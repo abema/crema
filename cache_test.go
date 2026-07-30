@@ -57,17 +57,6 @@ func (m *testMetricsProvider) recordedConcurrency() []int {
 	return append([]int(nil), m.concurrency...)
 }
 
-type metricsProviderWithoutLoadError struct{}
-
-func (metricsProviderWithoutLoadError) RecordCacheHit(context.Context)             {}
-func (metricsProviderWithoutLoadError) RecordCacheGet(context.Context)             {}
-func (metricsProviderWithoutLoadError) RecordCacheSet(context.Context)             {}
-func (metricsProviderWithoutLoadError) RecordCacheDelete(context.Context)          {}
-func (metricsProviderWithoutLoadError) RecordLoad(context.Context)                 {}
-func (metricsProviderWithoutLoadError) RecordLoadConcurrency(context.Context, int) {}
-
-var _ MetricsProvider = metricsProviderWithoutLoadError{}
-
 type countingMetricsProvider struct {
 	BaseMetricsProvider
 
@@ -472,7 +461,12 @@ func TestCache_GetOrLoadSkipsCacheOnGetError(t *testing.T) {
 
 	expectErr := errors.New("get failed")
 	provider := &errorProvider[CacheObject[int]]{getErr: expectErr}
-	cache := NewCache(provider, NoopCacheStorageCodec[int]{})
+	metrics := &testMetricsProvider{}
+	cache := NewCache(
+		provider,
+		NoopCacheStorageCodec[int]{},
+		WithMetricsProvider[int, CacheObject[int]](metrics),
+	)
 	impl := cache.(*cacheImpl[int, CacheObject[int]])
 	impl.now = func() time.Time { return time.UnixMilli(1000) }
 
@@ -500,6 +494,10 @@ func TestCache_GetOrLoadSkipsCacheOnGetError(t *testing.T) {
 	}
 	if calls != 2 {
 		t.Fatalf("expected loader to be called twice, got %d", calls)
+	}
+	reasons := metrics.recordedReasons()
+	if len(reasons) != 2 || reasons[0] != LoadReasonGetError || reasons[1] != LoadReasonGetError {
+		t.Fatalf("reasons = %v, want two get errors", reasons)
 	}
 }
 

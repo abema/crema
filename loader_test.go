@@ -96,7 +96,7 @@ func TestSingleflightLoader_LoadsOnce(t *testing.T) {
 func TestSingleflightLoader_SharedErrorRecordedOnce(t *testing.T) {
 	t.Parallel()
 
-	metrics := &countingMetricsProvider{}
+	metrics := &testMetricsProvider{}
 	loaderImpl := newSingleflightLoader[int](metrics, 0)
 	started := make(chan struct{})
 	unblock := make(chan struct{})
@@ -175,8 +175,14 @@ func TestSingleflightLoader_SharedErrorRecordedOnce(t *testing.T) {
 	if leaderCount != 1 {
 		t.Fatalf("expected exactly one leader, got %d", leaderCount)
 	}
-	if got := atomic.LoadInt32(&metrics.loadErrors); got != 1 {
+	if got := metrics.loads.Load(); got != 1 {
+		t.Fatalf("expected 1 load, got %d", got)
+	}
+	if got := metrics.loadErrors.Load(); got != 1 {
 		t.Fatalf("expected 1 load error, got %d", got)
+	}
+	if reasons := metrics.recordedReasons(); len(reasons) != 1 || reasons[0] != LoadReasonMiss {
+		t.Fatalf("expected reasons [%v], got %v", LoadReasonMiss, reasons)
 	}
 }
 

@@ -161,11 +161,11 @@ func (l *singleflightLoader[V]) load(ctx context.Context, key string, reason Loa
 	if leader {
 		go func() {
 			l.metrics.RecordLoad(inf.ctx)
-			recordLoadReason(l.metrics, inf.ctx, reason)
+			l.metrics.RecordLoadReason(inf.ctx, reason)
 
 			v, err := loader(inf.ctx)
 			if err != nil {
-				recordLoadError(l.metrics, inf.ctx)
+				l.metrics.RecordLoadError(inf.ctx)
 			}
 			l.finishInflight(inf, shard, v, err)
 		}()
@@ -204,11 +204,11 @@ func newDirectLoader[V any](metrics MetricsProvider) directLoader[V] {
 
 func (l directLoader[V]) load(ctx context.Context, _ string, reason LoadReason, loader CacheLoadFunc[V]) (V, bool, error) {
 	l.metrics.RecordLoad(ctx)
-	recordLoadReason(l.metrics, ctx, reason)
+	l.metrics.RecordLoadReason(ctx, reason)
 
 	v, err := loader(ctx)
 	if err != nil {
-		recordLoadError(l.metrics, ctx)
+		l.metrics.RecordLoadError(ctx)
 	}
 	l.metrics.RecordLoadConcurrency(ctx, 1)
 
