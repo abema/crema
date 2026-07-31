@@ -1,6 +1,7 @@
 package protobuf
 
 import (
+	"bytes"
 	"errors"
 	"reflect"
 
@@ -25,6 +26,7 @@ type ProtobufCodec[V proto.Message] struct {
 var (
 	_ crema.CacheStorageCodec[proto.Message, []byte] = ProtobufCodec[proto.Message]{}
 	_ crema.BufferReleasePolicy                      = ProtobufCodec[proto.Message]{}
+	_ crema.BufferEncoder[proto.Message]             = ProtobufCodec[proto.Message]{}
 )
 
 var (
@@ -45,7 +47,7 @@ func NewProtobufCodec[V proto.Message](prototype V) (ProtobufCodec[V], error) {
 
 // Encode marshals a cache object into the protobuf envelope format.
 func (p ProtobufCodec[V]) Encode(value crema.CacheObject[V]) ([]byte, error) {
-	serializedValue, err := proto.Marshal(value.Value)
+	serializedValue, err := marshalOptions.MarshalAppend(nil, value.Value)
 	if err != nil {
 		return nil, err
 	}
@@ -59,6 +61,29 @@ func (p ProtobufCodec[V]) Encode(value crema.CacheObject[V]) ([]byte, error) {
 	}
 
 	return encoded, nil
+}
+
+// EncodeTo appends the protobuf envelope to buf.
+func (p ProtobufCodec[V]) EncodeTo(buf *bytes.Buffer, value crema.CacheObject[V]) error {
+	offset := buf.Len()
+	serializedValue, err := marshalOptions.MarshalAppend(nil, value.Value)
+	if err != nil {
+		return err
+	}
+	envelope := &internalproto.ProtoCacheObject{}
+	envelope.SetVersion(protoCacheEnvelopeVersion)
+	envelope.SetSerializedValue(serializedValue)
+	envelope.SetExpireAtMillis(value.ExpireAtMillis)
+
+	encoded, err := marshalOptions.MarshalAppend(buf.AvailableBuffer(), envelope)
+	if err != nil {
+		buf.Truncate(offset)
+
+		return err
+	}
+	buf.Write(encoded)
+
+	return nil
 }
 
 // Decode unmarshals the protobuf envelope into a cache object.

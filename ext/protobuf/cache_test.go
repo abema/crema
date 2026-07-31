@@ -1,6 +1,7 @@
 package protobuf
 
 import (
+	"bytes"
 	"errors"
 	"strconv"
 	"testing"
@@ -42,6 +43,33 @@ func TestProtobufCodec_EncodeDecodeRoundTrip(t *testing.T) {
 	}
 	if out.ExpireAtMillis != 456 {
 		t.Fatalf("decoded expiration = %d, want %d", out.ExpireAtMillis, 456)
+	}
+}
+
+func TestProtobufCodec_EncodeToAppendsEnvelope(t *testing.T) {
+	t.Parallel()
+
+	codec, err := NewProtobufCodec(&testproto.ProtoTestObject{})
+	if err != nil {
+		t.Fatalf("NewProtobufCodec() error = %v", err)
+	}
+	value := &testproto.ProtoTestObject{}
+	value.SetValue(123)
+	input := crema.CacheObject[*testproto.ProtoTestObject]{
+		Value:          value,
+		ExpireAtMillis: 456,
+	}
+
+	want, err := codec.Encode(input)
+	if err != nil {
+		t.Fatalf("Encode() error = %v", err)
+	}
+	buf := bytes.NewBufferString("prefix")
+	if err := codec.EncodeTo(buf, input); err != nil {
+		t.Fatalf("EncodeTo() error = %v", err)
+	}
+	if got := buf.Bytes()[len("prefix"):]; !bytes.Equal(got, want) {
+		t.Fatalf("EncodeTo() appended %x, want %x", got, want)
 	}
 }
 
@@ -204,6 +232,30 @@ func TestProtobufCodec_EncodeRejectsInvalidUTF8(t *testing.T) {
 
 	if _, err := codec.Encode(in); err == nil {
 		t.Fatal("Encode() error = nil, want error")
+	}
+}
+
+func TestProtobufCodec_EncodeToErrorRestoresBuffer(t *testing.T) {
+	t.Parallel()
+
+	codec, err := NewProtobufCodec(&structpb.Struct{})
+	if err != nil {
+		t.Fatalf("NewProtobufCodec() error = %v", err)
+	}
+	input := crema.CacheObject[*structpb.Struct]{
+		Value: &structpb.Struct{
+			Fields: map[string]*structpb.Value{
+				string([]byte{0xff}): structpb.NewStringValue("ok"),
+			},
+		},
+	}
+
+	buf := bytes.NewBufferString("prefix")
+	if err := codec.EncodeTo(buf, input); err == nil {
+		t.Fatal("EncodeTo() error = nil, want error")
+	}
+	if got := buf.String(); got != "prefix" {
+		t.Fatalf("EncodeTo() buffer = %q, want %q", got, "prefix")
 	}
 }
 
