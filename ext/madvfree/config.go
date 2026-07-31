@@ -49,9 +49,10 @@ type Config struct {
 // Counter fields are cumulative for the lifetime of a Provider. Gauge fields
 // describe the state observed during the call to Provider.Stats.
 type Stats struct {
-	// Entries is the number of currently indexed cache entries.
+	// Entries is the number of allocated cache entries, including entries that
+	// were removed from the index but remain pinned by in-flight readers.
 	Entries int64
-	// LogicalBytes is the sum of the value lengths of current entries.
+	// LogicalBytes is the sum of value lengths represented by Entries.
 	LogicalBytes int64
 	// ReservedBytes is arena space assigned to current slabs and extents.
 	// It is not resident-set size.
