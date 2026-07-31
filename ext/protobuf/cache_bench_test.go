@@ -1,6 +1,7 @@
 package protobuf
 
 import (
+	"bytes"
 	"testing"
 
 	"github.com/abema/crema"
@@ -24,6 +25,29 @@ func BenchmarkProtobufCodecEncode(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		if _, err := codec.Encode(input); err != nil {
 			b.Fatalf("Encode() error = %v", err)
+		}
+	}
+}
+
+func BenchmarkProtobufCodecEncodeTo(b *testing.B) {
+	codec, err := NewProtobufCodec(&testproto.ProtoTestObject{})
+	if err != nil {
+		b.Fatalf("NewProtobufCodec() error = %v", err)
+	}
+	value := &testproto.ProtoTestObject{}
+	value.SetValue(123)
+	input := crema.CacheObject[*testproto.ProtoTestObject]{
+		Value:          value,
+		ExpireAtMillis: 456,
+	}
+	var buf bytes.Buffer
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		buf.Reset()
+		if err := codec.EncodeTo(&buf, input); err != nil {
+			b.Fatalf("EncodeTo() error = %v", err)
 		}
 	}
 }

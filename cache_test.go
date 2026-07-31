@@ -105,6 +105,7 @@ func TestCache_SetUsesTTLFromInitialCheck(t *testing.T) {
 		if nowCalls == 1 {
 			return time.UnixMilli(1000)
 		}
+
 		return time.UnixMilli(2000)
 	}
 
