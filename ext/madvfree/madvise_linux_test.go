@@ -14,6 +14,7 @@ import (
 
 type reclaimOnActivateBackend struct {
 	memoryBackend
+
 	touches int
 }
 
