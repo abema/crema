@@ -247,13 +247,14 @@ func (c *cacheImpl[V, S]) Get(ctx context.Context, key string) (CacheObject[V], 
 func (c *cacheImpl[V, S]) Set(ctx context.Context, key string, value CacheObject[V]) error {
 	c.metrics.RecordCacheSet(ctx)
 
-	encoded, err := c.codec.Encode(value)
-	if err != nil {
-		return err
-	}
 	ttl := time.UnixMilli(value.ExpireAtMillis).Sub(c.now())
 	if ttl <= 0 {
 		return nil
+	}
+
+	encoded, err := c.codec.Encode(value)
+	if err != nil {
+		return err
 	}
 
 	if err := c.provider.Set(ctx, key, encoded, ttl); err != nil {
