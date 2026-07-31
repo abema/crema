@@ -1,12 +1,12 @@
-<p align="center">
-  <img src="doc/logo.svg" alt="crema logo" width="240">
-</p>
-
 # crema ☕️
 
 A Go cache library with probabilistic revalidation and optional singleflight
 loading. It smooths refreshes near TTL expiry while deduplicating concurrent
 loads.
+
+<p align="center">
+  <img src="doc/logo.svg" alt="crema logo" width="180">
+</p>
 
 ## Features
 
