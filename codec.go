@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"sync"
 )
 
@@ -143,14 +144,36 @@ const (
 )
 
 var (
-	ErrDecompressZeroLengthData     = errors.New("invalid data for decompression")
-	ErrUnsupportedCompressionTypeID = errors.New("unsupported compression type ID")
+	ErrDecompressZeroLengthData      = errors.New("invalid data for decompression")
+	ErrDecompressedSizeLimitExceeded = errors.New("decompressed data exceeds configured limit")
+	ErrUnsupportedCompressionTypeID  = errors.New("unsupported compression type ID")
 )
+
+// BinaryCompressionOption configures a BinaryCompressionCodec.
+type BinaryCompressionOption func(*binaryCompressionConfig)
+
+type binaryCompressionConfig struct {
+	maxDecompressedBytes int64
+}
+
+// WithMaxDecompressedBytes limits the size of zlib data after decompression.
+// A non-positive value disables the limit. The default is disabled.
+func WithMaxDecompressedBytes(maxBytes int64) BinaryCompressionOption {
+	return func(config *binaryCompressionConfig) {
+		if maxBytes > 0 {
+			config.maxDecompressedBytes = maxBytes
+
+			return
+		}
+		config.maxDecompressedBytes = 0
+	}
+}
 
 type binaryCompressionCodec[V any] struct {
 	inner                    CacheStorageCodec[V, []byte]
 	innerBufferEncoder       BufferEncoder[V]
 	compressThresholdBytes   int
+	maxDecompressedBytes     int64
 	bufPool                  sync.Pool
 	canReleaseBufferOnDecode bool
 }
@@ -163,7 +186,15 @@ var _ CacheStorageCodec[any, []byte] = &binaryCompressionCodec[any]{}
 func NewBinaryCompressionCodec[V any](
 	inner CacheStorageCodec[V, []byte],
 	compressThresholdBytes int,
+	opts ...BinaryCompressionOption,
 ) CacheStorageCodec[V, []byte] {
+	config := binaryCompressionConfig{}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(&config)
+		}
+	}
+
 	canReleaseBufferOnDecode := false
 	if policy, ok := any(inner).(BufferReleasePolicy); ok {
 		canReleaseBufferOnDecode = policy.CanReleaseBufferOnDecode()
@@ -174,6 +205,7 @@ func NewBinaryCompressionCodec[V any](
 		inner:                  inner,
 		innerBufferEncoder:     innerBufferEncoder,
 		compressThresholdBytes: compressThresholdBytes,
+		maxDecompressedBytes:   config.maxDecompressedBytes,
 		bufPool: sync.Pool{
 			New: func() any {
 				return bytes.NewBuffer(nil)
@@ -251,7 +283,7 @@ func (b *binaryCompressionCodec[V]) Decode(data []byte) (CacheObject[V], error) 
 			defer b.returnBuffer(decompressBuf)
 		}
 
-		err := decompressZlib(decompressBuf, compressedData)
+		err := decompressZlibWithLimit(decompressBuf, compressedData, b.maxDecompressedBytes)
 		if err != nil {
 			return CacheObject[V]{}, err
 		}
@@ -302,14 +334,26 @@ func compressZlib(buf *bytes.Buffer, data []byte) error {
 	return nil
 }
 
-func decompressZlib(buf *bytes.Buffer, data []byte) error {
+func decompressZlibWithLimit(buf *bytes.Buffer, data []byte, maxBytes int64) error {
 	reader, err := zlib.NewReader(bytes.NewReader(data))
 	if err != nil {
 		return err
 	}
 	defer reader.Close()
-	if _, err := buf.ReadFrom(reader); err != nil {
+	var source io.Reader = reader
+	if maxBytes > 0 {
+		readLimit := maxBytes
+		if maxBytes < int64(1<<63-1) {
+			readLimit++
+		}
+		source = io.LimitReader(reader, readLimit)
+	}
+	read, err := buf.ReadFrom(source)
+	if err != nil {
 		return err
+	}
+	if maxBytes > 0 && read > maxBytes {
+		return fmt.Errorf("%w: max %d bytes", ErrDecompressedSizeLimitExceeded, maxBytes)
 	}
 
 	return nil

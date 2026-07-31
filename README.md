@@ -169,6 +169,10 @@ negative results take precedence when both predicates match.
 | ProtobufCodec | `github.com/abema/crema/ext/protobuf` | Protobuf encoding to `[]byte`. | [✅](example/protobuf_test.go) |
 | BinaryCompressionCodec | `github.com/abema/crema` | Wraps another codec and zlib-compresses encoded bytes above a threshold. | [✅](example/binary_compression_test.go) |
 
+`NewBinaryCompressionCodec` does not limit decompressed size by default. Use
+`WithMaxDecompressedBytes` when compressed values may come from an untrusted
+or shared backend.
+
 ### MetricsProvider
 
 | Name | Package | Notes | Example |
