@@ -463,7 +463,7 @@ func (p *Provider) retireSmall(item *cacheEntry) {
 
 // finalizeSmallLocked consumes both item.mu and meta.mu.
 //
-//nolint:cyclop,funlen // Slot and page lifecycle transitions must remain in one lock-consuming function.
+//nolint:cyclop // Slot and page lifecycle transitions must remain in one lock-consuming function.
 func (p *Provider) finalizeSmallLocked(item *cacheEntry, meta *smallPageMeta) {
 	if item.freed {
 		meta.mu.Unlock()

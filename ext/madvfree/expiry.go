@@ -40,6 +40,39 @@ func (h *expiryHeap) Pop() any {
 	return value
 }
 
+// cancelExpiry unregisters item from the expiration heap.
+func (p *Provider) cancelExpiry(item *cacheEntry) bool {
+	if item == nil || item.expiresAt == 0 {
+		return false
+	}
+
+	p.expiryMu.Lock()
+	wakeExpiry := p.cancelExpiryLocked(item)
+	p.expiryMu.Unlock()
+
+	return wakeExpiry
+}
+
+// rescheduleExpiry swaps old's registration for item's.
+func (p *Provider) rescheduleExpiry(old, item *cacheEntry) bool {
+	oldRegistered := old != nil && old.expiresAt != 0
+	if !oldRegistered && item.expiresAt == 0 {
+		return false
+	}
+
+	p.expiryMu.Lock()
+	wakeExpiry := false
+	if oldRegistered {
+		wakeExpiry = p.cancelExpiryLocked(old)
+	}
+	if item.expiresAt != 0 {
+		wakeExpiry = p.addExpiryLocked(item) || wakeExpiry
+	}
+	p.expiryMu.Unlock()
+
+	return wakeExpiry
+}
+
 // addExpiryLocked registers item while expiryMu is held.
 func (p *Provider) addExpiryLocked(item *cacheEntry) bool {
 	earliest := len(p.expirations) == 0 || item.expiresAt < p.expirations[0].expiresAt

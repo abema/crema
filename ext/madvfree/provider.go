@@ -323,7 +323,6 @@ func (p *Provider) Set(ctx context.Context, key string, value []byte, ttl time.D
 
 			return ErrCapacity
 		}
-
 		item = &cacheEntry{
 			key:        key,
 			kind:       allocationExtent,
@@ -711,12 +710,7 @@ func (p *Provider) replace(key string, item *cacheEntry) *cacheEntry {
 	shard := p.shard(key)
 	shard.mu.Lock()
 	old := shard.entries[key]
-	p.expiryMu.Lock()
-	wakeExpiry := p.cancelExpiryLocked(old)
-	if item.expiresAt != 0 {
-		wakeExpiry = p.addExpiryLocked(item) || wakeExpiry
-	}
-	p.expiryMu.Unlock()
+	wakeExpiry := p.rescheduleExpiry(old, item)
 	shard.entries[key] = item
 	shard.mu.Unlock()
 	if wakeExpiry {
@@ -730,9 +724,7 @@ func (p *Provider) remove(key string) *cacheEntry {
 	shard := p.shard(key)
 	shard.mu.Lock()
 	item := shard.entries[key]
-	p.expiryMu.Lock()
-	wakeExpiry := p.cancelExpiryLocked(item)
-	p.expiryMu.Unlock()
+	wakeExpiry := p.cancelExpiry(item)
 	delete(shard.entries, key)
 	shard.mu.Unlock()
 	if wakeExpiry {
@@ -750,9 +742,7 @@ func (p *Provider) removeIfSame(key string, expected *cacheEntry) bool {
 
 		return false
 	}
-	p.expiryMu.Lock()
-	wakeExpiry := p.cancelExpiryLocked(expected)
-	p.expiryMu.Unlock()
+	wakeExpiry := p.cancelExpiry(expected)
 	delete(shard.entries, key)
 	shard.mu.Unlock()
 	if wakeExpiry {
@@ -769,9 +759,7 @@ func (p *Provider) drainIndex(limit int64) []*cacheEntry {
 		shard := &p.shards[shardIndex]
 		shard.mu.Lock()
 		for key, item := range shard.entries {
-			p.expiryMu.Lock()
-			wakeExpiry := p.cancelExpiryLocked(item)
-			p.expiryMu.Unlock()
+			wakeExpiry := p.cancelExpiry(item)
 			delete(shard.entries, key)
 			result = append(result, item)
 			reserved += int64(item.pageCount) * int64(p.pageSize)
@@ -796,9 +784,7 @@ func (p *Provider) popAny() *cacheEntry {
 		shard := &p.shards[shardIndex]
 		shard.mu.Lock()
 		for key, item := range shard.entries {
-			p.expiryMu.Lock()
-			wakeExpiry := p.cancelExpiryLocked(item)
-			p.expiryMu.Unlock()
+			wakeExpiry := p.cancelExpiry(item)
 			delete(shard.entries, key)
 			shard.mu.Unlock()
 			if wakeExpiry {
