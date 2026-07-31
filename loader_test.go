@@ -292,6 +292,56 @@ func TestSingleflightLoader_LeaderContextDoneDoesNotBlock(t *testing.T) {
 	close(block)
 }
 
+func TestCache_GetOrLoadCachesDetachedLeaderResult(t *testing.T) {
+	t.Parallel()
+
+	provider := &testMemoryProvider[int]{items: make(map[string]CacheObject[int])}
+	cache := NewCache(provider, NoopCacheStorageCodec[int]{})
+	started := make(chan struct{})
+	release := make(chan struct{})
+	loader := func(context.Context) (int, error) {
+		close(started)
+		<-release
+
+		return 42, nil
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := cache.GetOrLoad(ctx, "key", time.Minute, loader)
+		errCh <- err
+	}()
+
+	<-started
+	cancel()
+	if err := <-errCh; err != context.Canceled {
+		t.Fatalf("GetOrLoad() error = %v, want context.Canceled", err)
+	}
+	close(release)
+
+	deadline := time.After(time.Second)
+	for {
+		value, found, err := cache.Get(context.Background(), "key")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if found {
+			if value.Value != 42 {
+				t.Fatalf("cached value = %d, want 42", value.Value)
+			}
+
+			return
+		}
+		select {
+		case <-deadline:
+			t.Fatal("detached load did not populate cache")
+		default:
+			time.Sleep(time.Millisecond)
+		}
+	}
+}
+
 func TestSingleflightLoader_AcquireAfterDoneReplacesInflight(t *testing.T) {
 	t.Parallel()
 
