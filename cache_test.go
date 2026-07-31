@@ -216,7 +216,7 @@ func TestCache_GetOrLoadRecordsLoadReason(t *testing.T) {
 			cache := NewCache(
 				provider,
 				NoopCacheStorageCodec[int]{},
-				WithMetricsProvider[int, CacheObject[int]](metrics),
+				WithMetricsProvider(metrics),
 			)
 			impl := cache.(*cacheImpl[int, CacheObject[int]])
 			impl.now = func() time.Time { return time.UnixMilli(1000) }
@@ -253,7 +253,7 @@ func TestCache_GetOrLoadRecordsLoadError(t *testing.T) {
 	cache := NewCache(
 		&testMemoryProvider[int]{items: make(map[string]CacheObject[int])},
 		NoopCacheStorageCodec[int]{},
-		WithMetricsProvider[int, CacheObject[int]](metrics),
+		WithMetricsProvider(metrics),
 	)
 	expectErr := errors.New("loader failed")
 
@@ -278,10 +278,10 @@ func TestCache_GetOrLoadRevalidationFallbackReturnsCachedValue(t *testing.T) {
 	metrics := &countingMetricsProvider{}
 	logs := &bytes.Buffer{}
 	cache := NewCache(provider, NoopCacheStorageCodec[int]{},
-		WithRevalidationFallback[int, CacheObject[int]](true),
-		WithDirectLoader[int, CacheObject[int]](),
-		WithMetricsProvider[int, CacheObject[int]](metrics),
-		WithLogger[int, CacheObject[int]](slog.New(slog.NewTextHandler(logs, &slog.HandlerOptions{Level: slog.LevelWarn}))),
+		WithRevalidationFallback(true),
+		WithDirectLoader(),
+		WithMetricsProvider(metrics),
+		WithLogger(slog.New(slog.NewTextHandler(logs, &slog.HandlerOptions{Level: slog.LevelWarn}))),
 	)
 	impl := cache.(*cacheImpl[int, CacheObject[int]])
 	impl.now = func() time.Time { return time.UnixMilli(1000) }
@@ -319,8 +319,8 @@ func TestCache_GetOrLoadRevalidationFallbackExpiredReturnsError(t *testing.T) {
 	}
 	metrics := &countingMetricsProvider{}
 	cache := NewCache(provider, NoopCacheStorageCodec[int]{},
-		WithRevalidationFallback[int, CacheObject[int]](true),
-		WithMetricsProvider[int, CacheObject[int]](metrics),
+		WithRevalidationFallback(true),
+		WithMetricsProvider(metrics),
 	)
 	impl := cache.(*cacheImpl[int, CacheObject[int]])
 	impl.now = func() time.Time { return time.UnixMilli(1000) }
@@ -373,7 +373,7 @@ func TestCache_GetOrLoadRevalidationFallbackPropagatesCancellation(t *testing.T)
 	provider := &testMemoryProvider[int]{items: map[string]CacheObject[int]{
 		"answer": {Value: 42, ExpireAtMillis: 2000},
 	}}
-	cache := NewCache(provider, NoopCacheStorageCodec[int]{}, WithDirectLoader[int, CacheObject[int]]())
+	cache := NewCache(provider, NoopCacheStorageCodec[int]{}, WithDirectLoader())
 	impl := cache.(*cacheImpl[int, CacheObject[int]])
 	impl.now = func() time.Time { return time.UnixMilli(1000) }
 	impl.random = fakeRandom(0)
@@ -424,7 +424,7 @@ func TestCache_GetOrLoadRevalidationFallbackDisabledPropagatesError(t *testing.T
 		Value:          42,
 		ExpireAtMillis: 2000,
 	}
-	cache := NewCache(provider, NoopCacheStorageCodec[int]{}, WithRevalidationFallback[int, CacheObject[int]](false))
+	cache := NewCache(provider, NoopCacheStorageCodec[int]{}, WithRevalidationFallback(false))
 	impl := cache.(*cacheImpl[int, CacheObject[int]])
 	impl.now = func() time.Time { return time.UnixMilli(1000) }
 	impl.random = fakeRandom(0)
@@ -466,7 +466,7 @@ func TestCache_GetOrLoadSkipsCacheOnGetError(t *testing.T) {
 	cache := NewCache(
 		provider,
 		NoopCacheStorageCodec[int]{},
-		WithMetricsProvider[int, CacheObject[int]](metrics),
+		WithMetricsProvider(metrics),
 	)
 	impl := cache.(*cacheImpl[int, CacheObject[int]])
 	impl.now = func() time.Time { return time.UnixMilli(1000) }
@@ -707,7 +707,7 @@ func TestWithLogger_SetsLogger(t *testing.T) {
 	provider := &testMemoryProvider[int]{items: make(map[string]CacheObject[int])}
 	custom := slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{}))
 
-	cache := NewCache(provider, NoopCacheStorageCodec[int]{}, WithLogger[int, CacheObject[int]](custom))
+	cache := NewCache(provider, NoopCacheStorageCodec[int]{}, WithLogger(custom))
 	impl := cache.(*cacheImpl[int, CacheObject[int]])
 
 	if impl.logger != custom {
@@ -721,7 +721,7 @@ func TestWithMetricsProvider_SetsMetrics(t *testing.T) {
 	provider := &testMemoryProvider[int]{items: make(map[string]CacheObject[int])}
 	metrics := &testMetricsProvider{}
 
-	cache := NewCache(provider, NoopCacheStorageCodec[int]{}, WithMetricsProvider[int, CacheObject[int]](metrics))
+	cache := NewCache(provider, NoopCacheStorageCodec[int]{}, WithMetricsProvider(metrics))
 	impl := cache.(*cacheImpl[int, CacheObject[int]])
 
 	if impl.metrics != metrics {
@@ -745,8 +745,8 @@ func TestWithMetricsProvider_WithDirectLoader(t *testing.T) {
 	cache := NewCache(
 		provider,
 		NoopCacheStorageCodec[int]{},
-		WithDirectLoader[int, CacheObject[int]](),
-		WithMetricsProvider[int, CacheObject[int]](metrics),
+		WithDirectLoader(),
+		WithMetricsProvider(metrics),
 	)
 	impl := cache.(*cacheImpl[int, CacheObject[int]])
 
@@ -771,8 +771,8 @@ func TestWithMetricsProvider_BeforeLoaderOptions(t *testing.T) {
 	cache := NewCache(
 		provider,
 		NoopCacheStorageCodec[int]{},
-		WithMetricsProvider[int, CacheObject[int]](metrics),
-		WithMaxLoadTimeout[int, CacheObject[int]](time.Minute),
+		WithMetricsProvider(metrics),
+		WithMaxLoadTimeout(time.Minute),
 	)
 	impl := cache.(*cacheImpl[int, CacheObject[int]])
 
@@ -800,8 +800,8 @@ func TestDirectLoader_RecordsLoadMetrics(t *testing.T) {
 	cache := NewCache(
 		provider,
 		NoopCacheStorageCodec[int]{},
-		WithDirectLoader[int, CacheObject[int]](),
-		WithMetricsProvider[int, CacheObject[int]](metrics),
+		WithDirectLoader(),
+		WithMetricsProvider(metrics),
 	)
 	impl := cache.(*cacheImpl[int, CacheObject[int]])
 	impl.now = func() time.Time { return time.UnixMilli(1000) }
@@ -832,7 +832,7 @@ func TestWithMetricsProvider_NilFallsBackToNoop(t *testing.T) {
 	t.Parallel()
 
 	provider := &testMemoryProvider[int]{items: make(map[string]CacheObject[int])}
-	cache := NewCache(provider, NoopCacheStorageCodec[int]{}, WithMetricsProvider[int, CacheObject[int]](nil))
+	cache := NewCache(provider, NoopCacheStorageCodec[int]{}, WithMetricsProvider(nil))
 	impl := cache.(*cacheImpl[int, CacheObject[int]])
 
 	if impl.metrics == nil {
@@ -854,7 +854,7 @@ func TestWithDirectLoader_UsesDirectLoader(t *testing.T) {
 	t.Parallel()
 
 	provider := &testMemoryProvider[int]{items: make(map[string]CacheObject[int])}
-	cache := NewCache(provider, NoopCacheStorageCodec[int]{}, WithDirectLoader[int, CacheObject[int]]())
+	cache := NewCache(provider, NoopCacheStorageCodec[int]{}, WithDirectLoader())
 	impl := cache.(*cacheImpl[int, CacheObject[int]])
 
 	if _, ok := impl.internalLoader.(directLoader[int]); !ok {
@@ -867,7 +867,7 @@ func TestWithMaxLoadTimeout_SetsSingleflightTimeout(t *testing.T) {
 
 	provider := &testMemoryProvider[int]{items: make(map[string]CacheObject[int])}
 	timeout := 1500 * time.Millisecond
-	cache := NewCache(provider, NoopCacheStorageCodec[int]{}, WithMaxLoadTimeout[int, CacheObject[int]](timeout))
+	cache := NewCache(provider, NoopCacheStorageCodec[int]{}, WithMaxLoadTimeout(timeout))
 	impl := cache.(*cacheImpl[int, CacheObject[int]])
 
 	if impl.maxLoadTimeout != timeout {
@@ -889,7 +889,7 @@ func TestWithRevalidationWindow_SetsValues(t *testing.T) {
 	target := 1500 * time.Millisecond
 	expectedSteepness, expectedWindow := calculateSteepnessAndRevalidationWindow(target.Milliseconds())
 
-	cache := NewCache(provider, NoopCacheStorageCodec[int]{}, WithRevalidationWindow[int, CacheObject[int]](target))
+	cache := NewCache(provider, NoopCacheStorageCodec[int]{}, WithRevalidationWindow(target))
 	impl := cache.(*cacheImpl[int, CacheObject[int]])
 
 	if impl.steepness != expectedSteepness {
@@ -904,7 +904,7 @@ func TestWithRevalidationWindow_DefaultsOnZero(t *testing.T) {
 	t.Parallel()
 
 	provider := &testMemoryProvider[int]{items: make(map[string]CacheObject[int])}
-	cache := NewCache(provider, NoopCacheStorageCodec[int]{}, WithRevalidationWindow[int, CacheObject[int]](0))
+	cache := NewCache(provider, NoopCacheStorageCodec[int]{}, WithRevalidationWindow(0))
 	impl := cache.(*cacheImpl[int, CacheObject[int]])
 
 	if impl.steepness != 0 {

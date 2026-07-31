@@ -39,14 +39,14 @@ func (p *testNegativeProvider) Delete(_ context.Context, key string) error {
 	return nil
 }
 
-func newNegativeTestCache(t *testing.T, provider *testNegativeProvider) Cache[int, CacheObject[int]] {
+func newNegativeTestCache(t *testing.T, provider *testNegativeProvider) Cache[int] {
 	t.Helper()
 
 	return NewCache(
 		&testMemoryProvider[int]{items: make(map[string]CacheObject[int])},
 		NoopCacheStorageCodec[int]{},
-		WithDirectLoader[int, CacheObject[int]](),
-		WithLoadErrorCacheProvider[int, CacheObject[int]](provider, time.Second, func(error) bool { return true }),
+		WithDirectLoader(),
+		WithLoadErrorCacheProvider(provider, time.Second, func(error) bool { return true }),
 	)
 }
 
@@ -123,7 +123,7 @@ func TestWithNegativeCacheProviderDisabled(t *testing.T) {
 	cache := NewCache(
 		&testMemoryProvider[int]{items: make(map[string]CacheObject[int])},
 		NoopCacheStorageCodec[int]{},
-		WithLoadErrorCacheProvider[int, CacheObject[int]](nil, time.Second, nil),
+		WithLoadErrorCacheProvider(nil, time.Second, nil),
 	)
 	if cache.(*cacheImpl[int, CacheObject[int]]).negativeCache != nil {
 		t.Fatal("negative cache enabled without provider")
@@ -137,8 +137,8 @@ func TestCache_NegativeCacheProviderCachesOnlyAbsentErrors(t *testing.T) {
 	cache := NewCache(
 		provider,
 		NoopCacheStorageCodec[int]{},
-		WithDirectLoader[int, CacheObject[int]](),
-		WithNegativeCacheProvider[int, CacheObject[int]](
+		WithDirectLoader(),
+		WithNegativeCacheProvider(
 			negative,
 			time.Second,
 			func(err error) bool { return errors.Is(err, notFound) },

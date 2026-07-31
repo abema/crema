@@ -32,7 +32,7 @@ func ExampleWithLoadErrorCacheProvider() {
 	cache := NewCache(
 		provider,
 		NoopCacheStorageCodec[int]{},
-		WithLoadErrorCacheProvider[int, CacheObject[int]](negativeProvider, time.Second, func(error) bool { return true }),
+		WithLoadErrorCacheProvider(negativeProvider, time.Second, func(error) bool { return true }),
 	)
 
 	backendDown := errors.New("backend down")

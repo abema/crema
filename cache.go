@@ -12,7 +12,7 @@ import (
 // Implementations are safe for concurrent use as long as CacheProvider and
 // CacheStorageCodec implementations are goroutine-safe.
 // Use NewCache to construct an implementation.
-type Cache[V any, S any] interface {
+type Cache[V any] interface {
 	// Get returns the cached entry for key.
 	Get(ctx context.Context, key string) (CacheObject[V], bool, error)
 	// Set stores a cached entry for key.
@@ -54,14 +54,27 @@ type CacheObject[V any] struct {
 // CacheLoadFunc loads a value when it is missing or needs revalidation.
 type CacheLoadFunc[V any] func(ctx context.Context) (V, error)
 
+type cacheConfig struct {
+	logger                         *slog.Logger
+	metrics                        MetricsProvider
+	steepness                      float64
+	revalidationWindowMilliseconds int64
+	maxLoadTimeout                 time.Duration
+	revalidationFallback           bool
+	negativeCacheTTL               time.Duration
+	negativeCacheProvider          CacheProvider[error]
+	negativeCacheErrorPredicate    LoadErrorCacheErrorPredicate
+	useDirectLoader                bool
+}
+
 // CacheOption configures a Cache instance.
-type CacheOption[V any, S any] func(*cacheImpl[V, S])
+type CacheOption func(*cacheConfig)
 
 const defaultRevalidationWindowMilliseconds = 300000
 
 // WithLogger overrides the default logger used for cache warnings.
-func WithLogger[V any, S any](logger *slog.Logger) CacheOption[V, S] {
-	return func(c *cacheImpl[V, S]) {
+func WithLogger(logger *slog.Logger) CacheOption {
+	return func(c *cacheConfig) {
 		if logger != nil {
 			c.logger = logger
 		}
@@ -69,8 +82,8 @@ func WithLogger[V any, S any](logger *slog.Logger) CacheOption[V, S] {
 }
 
 // WithMetricsProvider overrides the default metrics provider.
-func WithMetricsProvider[V any, S any](metrics MetricsProvider) CacheOption[V, S] {
-	return func(c *cacheImpl[V, S]) {
+func WithMetricsProvider(metrics MetricsProvider) CacheOption {
+	return func(c *cacheConfig) {
 		if metrics == nil {
 			metrics = NoopMetricsProvider{}
 		}
@@ -79,18 +92,18 @@ func WithMetricsProvider[V any, S any](metrics MetricsProvider) CacheOption[V, S
 }
 
 // WithDirectLoader disables singleflight and calls loaders directly.
-func WithDirectLoader[V any, S any]() CacheOption[V, S] {
-	return func(c *cacheImpl[V, S]) {
+func WithDirectLoader() CacheOption {
+	return func(c *cacheConfig) {
 		c.useDirectLoader = true
 	}
 }
 
 // WithRevalidationWindow sets how long before expiry probabilistic revalidation starts.
 // A zero duration disables probabilistic revalidation.
-func WithRevalidationWindow[V any, S any](duration time.Duration) CacheOption[V, S] {
+func WithRevalidationWindow(duration time.Duration) CacheOption {
 	steepness, revalidationWindowMilliseconds := calculateSteepnessAndRevalidationWindow(duration.Milliseconds())
 
-	return func(c *cacheImpl[V, S]) {
+	return func(c *cacheConfig) {
 		c.steepness = steepness
 		c.revalidationWindowMilliseconds = revalidationWindowMilliseconds
 	}
@@ -98,27 +111,27 @@ func WithRevalidationWindow[V any, S any](duration time.Duration) CacheOption[V,
 
 // WithMaxLoadTimeout sets the maximum duration allowed for loader execution.
 // A non-positive duration disables the timeout.
-func WithMaxLoadTimeout[V any, S any](duration time.Duration) CacheOption[V, S] {
-	return func(c *cacheImpl[V, S]) {
+func WithMaxLoadTimeout(duration time.Duration) CacheOption {
+	return func(c *cacheConfig) {
 		c.maxLoadTimeout = duration
 	}
 }
 
 // WithRevalidationFallback controls whether GetOrLoad returns a still-valid
 // cached value when revalidation fails. It is enabled by default.
-func WithRevalidationFallback[V any, S any](enabled bool) CacheOption[V, S] {
-	return func(c *cacheImpl[V, S]) {
+func WithRevalidationFallback(enabled bool) CacheOption {
+	return func(c *cacheConfig) {
 		c.revalidationFallback = enabled
 	}
 }
 
 // WithLoadErrorCacheProvider caches errors selected by shouldCache through provider.
-func WithLoadErrorCacheProvider[V any, S any](
+func WithLoadErrorCacheProvider(
 	provider CacheProvider[error],
 	ttl time.Duration,
 	shouldCache LoadErrorCacheErrorPredicate,
-) CacheOption[V, S] {
-	return func(c *cacheImpl[V, S]) {
+) CacheOption {
+	return func(c *cacheConfig) {
 		if provider == nil || shouldCache == nil || ttl <= 0 {
 			c.negativeCacheProvider = nil
 			c.negativeCacheTTL = 0
@@ -133,12 +146,12 @@ func WithLoadErrorCacheProvider[V any, S any](
 
 // WithNegativeCacheProvider caches errors selected by isNegative as absent values.
 // It replaces any load-error-cache provider configured by earlier options.
-func WithNegativeCacheProvider[V any, S any](
+func WithNegativeCacheProvider(
 	provider CacheProvider[error],
 	ttl time.Duration,
 	isNegative NegativeCacheErrorPredicate,
-) CacheOption[V, S] {
-	return func(c *cacheImpl[V, S]) {
+) CacheOption {
+	return func(c *cacheConfig) {
 		if provider == nil || isNegative == nil || ttl <= 0 {
 			c.negativeCacheProvider = nil
 			c.negativeCacheTTL = 0
@@ -152,26 +165,35 @@ func WithNegativeCacheProvider[V any, S any](
 }
 
 // NewCache constructs a Cache with defaults and optional overrides.
-func NewCache[V any, S any](provider CacheProvider[S], codec CacheStorageCodec[V, S], opts ...CacheOption[V, S]) Cache[V, S] {
+func NewCache[V any, S any](provider CacheProvider[S], codec CacheStorageCodec[V, S], opts ...CacheOption) Cache[V] {
 	steepness, revalidationWindowMilliseconds := calculateSteepnessAndRevalidationWindow(defaultRevalidationWindowMilliseconds)
+	config := cacheConfig{
+		logger:                         slog.New(noopLogHandler{}),
+		metrics:                        NoopMetricsProvider{},
+		steepness:                      steepness,
+		revalidationWindowMilliseconds: revalidationWindowMilliseconds,
+		revalidationFallback:           true,
+	}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(&config)
+		}
+	}
 	cache := &cacheImpl[V, S]{
 		provider:                       provider,
 		codec:                          codec,
-		logger:                         slog.New(noopLogHandler{}),
-		metrics:                        NoopMetricsProvider{},
+		logger:                         config.logger,
+		metrics:                        config.metrics,
 		now:                            time.Now,
 		random:                         rand.Float64,
-		steepness:                      steepness,
-		revalidationWindowMilliseconds: revalidationWindowMilliseconds,
-		maxLoadTimeout:                 0,
-		revalidationFallback:           true,
-		useDirectLoader:                false,
-	}
-	for _, opt := range opts {
-		if opt == nil {
-			continue
-		}
-		opt(cache)
+		steepness:                      config.steepness,
+		revalidationWindowMilliseconds: config.revalidationWindowMilliseconds,
+		maxLoadTimeout:                 config.maxLoadTimeout,
+		revalidationFallback:           config.revalidationFallback,
+		negativeCacheProvider:          config.negativeCacheProvider,
+		negativeCacheTTL:               config.negativeCacheTTL,
+		negativeCacheErrorPredicate:    config.negativeCacheErrorPredicate,
+		useDirectLoader:                config.useDirectLoader,
 	}
 	if cache.negativeCacheProvider != nil && cache.negativeCacheTTL > 0 {
 		cache.negativeCache = newNegativeCache(cache.negativeCacheProvider)
