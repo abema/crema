@@ -68,6 +68,23 @@ func TestRedisCacheProvider_TTL(t *testing.T) {
 	}
 }
 
+func TestRedisCacheProvider_SubMillisecondTTL(t *testing.T) {
+	t.Parallel()
+
+	server, _, provider := newTestRedisProvider(t)
+	if err := provider.Set(context.Background(), "key", []byte("value"), time.Nanosecond); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+	if _, err := server.Get("key"); err != nil {
+		t.Fatal("expected key to exist before the rounded TTL expires")
+	}
+
+	server.FastForward(time.Millisecond)
+	if _, found, err := provider.Get(context.Background(), "key"); err != nil || found {
+		t.Fatalf("Get() after ttl = (_, %v, %v), want miss", found, err)
+	}
+}
+
 func TestRedisCacheProvider_GetWrongType(t *testing.T) {
 	t.Parallel()
 

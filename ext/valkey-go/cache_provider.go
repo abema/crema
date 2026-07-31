@@ -33,10 +33,24 @@ func (p *ValkeyCacheProvider) Get(ctx context.Context, key string) ([]byte, bool
 func (p *ValkeyCacheProvider) Set(ctx context.Context, key string, value []byte, ttl time.Duration) error {
 	builder := p.client.B().Set().Key(key).Value(valkey.BinaryString(value))
 	if ttl > 0 {
-		return p.client.Do(ctx, builder.Px(ttl).Build()).Error()
+		return p.client.Do(ctx, builder.Px(ceilMilliseconds(ttl)).Build()).Error()
 	}
 
 	return p.client.Do(ctx, builder.Build()).Error()
+}
+
+func ceilMilliseconds(ttl time.Duration) time.Duration {
+	remainder := ttl % time.Millisecond
+	if remainder == 0 {
+		return ttl
+	}
+
+	padding := time.Millisecond - remainder
+	if ttl > time.Duration(1<<63-1)-padding {
+		return time.Duration(1<<63 - 1)
+	}
+
+	return ttl + padding
 }
 
 // Delete removes a cached value from Valkey.
