@@ -26,12 +26,13 @@ func ExampleCache() {
 	// Output: 42
 }
 
-func ExampleWithNegativeCache() {
+func ExampleWithLoadErrorCacheProvider() {
 	provider := &testMemoryProvider[int]{items: make(map[string]CacheObject[int])}
+	negativeProvider := &testNegativeProvider{entries: make(map[string]error)}
 	cache := NewCache(
 		provider,
 		NoopCacheStorageCodec[int]{},
-		WithNegativeCache[int, CacheObject[int]](time.Second),
+		WithLoadErrorCacheProvider[int, CacheObject[int]](negativeProvider, time.Second, func(error) bool { return true }),
 	)
 
 	backendDown := errors.New("backend down")

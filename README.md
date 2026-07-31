@@ -111,20 +111,18 @@ func main() {
 - `WithRevalidationFallback(enabled)`: Enable or disable revalidation fallback (enabled by default)
 - `WithLogger(logger)`: Override warning logger for get/set failures
 - `WithMetricsProvider(metrics)`: Record cache and loader events
-- `WithNegativeCache(ttl)`: Cache load errors for `ttl` (disabled by default)
-- `WithNegativeCacheCapacity(capacity)`: Limit negative entries (default: 32,768)
-- `WithNegativeCacheErrorPredicate(predicate)`: Choose which errors are cached
+- `WithLoadErrorCacheProvider(provider, ttl, shouldCache)`: Cache selected load errors
+- `WithNegativeCacheProvider(provider, ttl, isNegative)`: Cache absent-value errors through a separate provider
 
 ## Negative Cache
 
-`WithNegativeCache` keeps load errors briefly to suppress repeated loads:
+`WithLoadErrorCacheProvider` keeps selected load errors briefly to suppress repeated loads:
 
 ```go
 cache := crema.NewCache(
 	provider,
 	crema.NoopCacheStorageCodec[int]{},
-	crema.WithNegativeCache[int, crema.CacheObject[int]](500*time.Millisecond),
-	crema.WithNegativeCacheErrorPredicate[int, crema.CacheObject[int]](func(err error) bool {
+	crema.WithLoadErrorCacheProvider[int, crema.CacheObject[int]](negativeProvider, 500*time.Millisecond, func(err error) bool {
 		return !errors.Is(err, ErrNotFound)
 	}),
 )
@@ -135,16 +133,16 @@ cache := crema.NewCache(
 - The negative TTL is independent of the value TTL passed to `GetOrLoad`.
 - With the default revalidation fallback, a still-valid value wins over a
   negative entry.
-- `DefaultNegativeCacheErrorPredicate` caches every error except
-  `context.Canceled` and `context.DeadlineExceeded`.
 - Successful `Set` and `Delete` operations invalidate the negative entry.
-- Errors are held in process memory, never passed to `CacheProvider` or
-  `CacheStorageCodec`, and are not shared across processes.
-- The store holds at most `DefaultNegativeCacheCapacity` entries by default;
-  configure it with `WithNegativeCacheCapacity`. Entries may be evicted before
-  their TTL under high key cardinality.
-- Hits and stores are reported via `RecordNegativeCacheHit` and
-  `RecordNegativeCacheSet` on `MetricsProvider`.
+- The negative provider is a `CacheProvider[error]`; configure its capacity and
+  eviction policy independently. An in-process provider such as Ristretto keeps
+  error identity for `errors.Is` and `errors.As`.
+- A `NegativeCacheMetricsProvider` can record negative-cache hits and stores.
+
+`WithNegativeCacheProvider` has the usual negative-cache semantics: its
+`isNegative` predicate selects only errors that mean a value is absent, such as
+`sql.ErrNoRows`. It shares the same implementation as the load-error cache;
+when both options are provided, the last one wins.
 
 ## Implementations
 

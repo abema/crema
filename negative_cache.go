@@ -2,46 +2,27 @@ package crema
 
 import (
 	"context"
-	"errors"
 	"sync"
-	"sync/atomic"
+	"time"
 )
 
-const (
-	negativeCacheMaxShardCount   = 64
-	negativeCacheGenerationCount = 4096
-)
+const negativeCacheFenceCount = 4096
 
-// NegativeCacheErrorPredicate reports whether a load error should be cached.
+// LoadErrorCacheErrorPredicate reports whether a load error should be cached.
 // Implementations must be safe for concurrent use.
+type LoadErrorCacheErrorPredicate func(err error) bool
+
+// NegativeCacheErrorPredicate reports whether an error represents an absent value.
 type NegativeCacheErrorPredicate func(err error) bool
 
-// DefaultNegativeCacheErrorPredicate caches every non-context error.
-func DefaultNegativeCacheErrorPredicate(err error) bool {
-	if err == nil {
-		return false
-	}
-
-	return !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded)
+type negativeCache struct {
+	provider CacheProvider[error]
+	fences   []negativeCacheFence
 }
 
-type negativeCacheStore struct {
-	_           noCopy
-	shards      []negativeCacheShard
-	generations []atomic.Uint64
-}
-
-type negativeCacheShard struct {
-	_        noCopy
-	mu       sync.RWMutex
-	entries  map[string]negativeCacheEntry
-	capacity int
-}
-
-type negativeCacheEntry struct {
-	err            error
-	expireAtMillis int64
-	generation     uint64
+type negativeCacheFence struct {
+	mu         sync.RWMutex
+	generation uint64
 }
 
 type negativeCacheToken struct {
@@ -49,131 +30,59 @@ type negativeCacheToken struct {
 	generation uint64
 }
 
-func newNegativeCacheStore(capacity int) *negativeCacheStore {
-	shardCount := min(capacity, negativeCacheMaxShardCount)
-	shards := make([]negativeCacheShard, shardCount)
-	shardCapacity := capacity / shardCount
-	remainder := capacity % shardCount
-	for i := range shards {
-		capacity := shardCapacity
-		if i < remainder {
-			capacity++
-		}
-		shards[i] = negativeCacheShard{
-			entries:  make(map[string]negativeCacheEntry),
-			capacity: capacity,
-		}
-	}
-
-	return &negativeCacheStore{
-		shards:      shards,
-		generations: make([]atomic.Uint64, negativeCacheGenerationCount),
+func newNegativeCache(provider CacheProvider[error]) *negativeCache {
+	return &negativeCache{
+		provider: provider,
+		fences:   make([]negativeCacheFence, negativeCacheFenceCount),
 	}
 }
 
-func (s *negativeCacheStore) shardFor(key string) *negativeCacheShard {
-	return &s.shards[hashKey(key)%uint64(len(s.shards))]
+func (c *negativeCache) fence(key string) *negativeCacheFence {
+	return &c.fences[hashKey(key)%uint64(len(c.fences))]
 }
 
-func (s *negativeCacheStore) tokenFor(key string) negativeCacheToken {
-	index := hashKey(key) % uint64(len(s.generations))
+func (c *negativeCache) token(key string) negativeCacheToken {
+	index := hashKey(key) % uint64(len(c.fences))
+	fence := &c.fences[index]
+	fence.mu.RLock()
+	generation := fence.generation
+	fence.mu.RUnlock()
 
-	return negativeCacheToken{
-		index:      index,
-		generation: s.generations[index].Load(),
-	}
+	return negativeCacheToken{index: index, generation: generation}
 }
 
-func (s *negativeCacheStore) get(key string, nowMillis int64) (error, bool) {
-	shard := s.shardFor(key)
-	shard.mu.RLock()
-	entry, ok := shard.entries[key]
-	shard.mu.RUnlock()
-	if !ok {
-		return nil, false
-	}
-	if entry.expireAtMillis > nowMillis {
-		return entry.err, true
-	}
-
-	shard.mu.Lock()
-	if current, ok := shard.entries[key]; ok && current.expireAtMillis <= nowMillis {
-		delete(shard.entries, key)
-	}
-	shard.mu.Unlock()
-
-	return nil, false
+func (c *negativeCache) get(ctx context.Context, key string) (error, bool, error) {
+	return c.provider.Get(ctx, key)
 }
 
-func (s *negativeCacheStore) set(
+func (c *negativeCache) set(
+	ctx context.Context,
 	key string,
 	err error,
-	nowMillis int64,
-	expireAtMillis int64,
+	ttl time.Duration,
 	token negativeCacheToken,
-) bool {
-	if expireAtMillis <= nowMillis || s.generations[token.index].Load() != token.generation {
-		return false
+) (bool, error) {
+	if ttl <= 0 {
+		return false, nil
+	}
+	fence := &c.fences[token.index]
+	fence.mu.RLock()
+	defer fence.mu.RUnlock()
+	if fence.generation != token.generation {
+		return false, nil
+	}
+	if err := c.provider.Set(ctx, key, err, ttl); err != nil {
+		return false, err
 	}
 
-	shard := s.shardFor(key)
-	if !shard.setIfAbsent(key, err, nowMillis, expireAtMillis, token.generation) {
-		return false
-	}
-	if s.generations[token.index].Load() == token.generation {
-		return true
-	}
-
-	shard.deleteGeneration(key, token.generation)
-
-	return false
+	return true, nil
 }
 
-func (s *negativeCacheShard) setIfAbsent(
-	key string,
-	err error,
-	nowMillis int64,
-	expireAtMillis int64,
-	generation uint64,
-) bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+func (c *negativeCache) invalidate(ctx context.Context, key string) error {
+	fence := c.fence(key)
+	fence.mu.Lock()
+	defer fence.mu.Unlock()
+	fence.generation++
 
-	if entry, ok := s.entries[key]; ok &&
-		entry.expireAtMillis > nowMillis &&
-		entry.generation == generation {
-		return false
-	}
-	if _, ok := s.entries[key]; !ok && len(s.entries) >= s.capacity {
-		for victim := range s.entries {
-			delete(s.entries, victim)
-
-			break
-		}
-	}
-	s.entries[key] = negativeCacheEntry{
-		err:            err,
-		expireAtMillis: expireAtMillis,
-		generation:     generation,
-	}
-
-	return true
-}
-
-func (s *negativeCacheShard) deleteGeneration(key string, generation uint64) {
-	s.mu.Lock()
-	if entry, ok := s.entries[key]; ok && entry.generation == generation {
-		delete(s.entries, key)
-	}
-	s.mu.Unlock()
-}
-
-func (s *negativeCacheStore) invalidate(key string) {
-	token := s.tokenFor(key)
-	s.generations[token.index].Add(1)
-
-	shard := s.shardFor(key)
-	shard.mu.Lock()
-	delete(shard.entries, key)
-	shard.mu.Unlock()
+	return c.provider.Delete(ctx, key)
 }

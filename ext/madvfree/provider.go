@@ -794,7 +794,7 @@ func (p *Provider) removeIfSame(key string, expected *cacheEntry) bool {
 
 // drainIndex removes and returns indexed entries.
 func (p *Provider) drainIndex() []*cacheEntry {
-	var result []*cacheEntry
+	result := make([]*cacheEntry, 0, len(p.shards))
 	for shardIndex := range p.shards {
 		shard := &p.shards[shardIndex]
 		shard.mu.Lock()
