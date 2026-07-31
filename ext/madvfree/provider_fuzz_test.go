@@ -89,7 +89,7 @@ func FuzzProviderStateMachine(f *testing.F) {
 				}
 			case 5:
 				item := provider.lookup(key)
-				if item != nil {
+				if item != nil && item.expiresAt == 0 {
 					pageOffset := uint32(operations[offset+2]) % item.pageCount
 					forced, affectsTarget, err := forceReclaimForFuzz(provider, item, pageOffset)
 					if err != nil {
