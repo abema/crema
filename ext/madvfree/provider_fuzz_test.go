@@ -241,10 +241,6 @@ func assertProviderStats(t *testing.T, provider *Provider) {
 	}
 }
 
-// checkProviderStats reports arena accounting violations instead of failing the
-// test directly, so concurrent workers can check the same invariants from their
-// own goroutines. Stats reads its gauges under allocatorMu, so every snapshot is
-// consistent even while other goroutines allocate and release.
 func checkProviderStats(provider *Provider) error {
 	stats := provider.Stats()
 	if stats.Entries < 0 || stats.LogicalBytes < 0 || stats.ReservedBytes < 0 || stats.FreeBytes < 0 {

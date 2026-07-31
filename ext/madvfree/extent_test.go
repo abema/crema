@@ -13,8 +13,6 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// newExtentTestProvider returns a provider with slabs disabled, so every value
-// is stored in a contiguous extent regardless of its size.
 func newExtentTestProvider(t *testing.T, pages int) *Provider {
 	t.Helper()
 	provider, err := NewProvider(Config{
@@ -34,7 +32,6 @@ func newExtentTestProvider(t *testing.T, pages int) *Provider {
 	return provider
 }
 
-// setExtent stores value under key and returns the indexed extent entry.
 func setExtent(t *testing.T, provider *Provider, key string, value []byte, ttl time.Duration) *cacheEntry {
 	t.Helper()
 	if err := provider.Set(context.Background(), key, value, ttl); err != nil {
@@ -51,7 +48,6 @@ func setExtent(t *testing.T, provider *Provider, key string, value []byte, ttl t
 	return item
 }
 
-// acquireExtentReader pins item the way a Get in progress does.
 func acquireExtentReader(t *testing.T, provider *Provider, item *cacheEntry) {
 	t.Helper()
 	reclaimed, acquired, err := provider.acquireExtent(item)
@@ -60,7 +56,6 @@ func acquireExtentReader(t *testing.T, provider *Provider, item *cacheEntry) {
 	}
 }
 
-// assertExtentReaderSeesValue copies item's payload the way a pinned Get does.
 func assertExtentReaderSeesValue(t *testing.T, provider *Provider, item *cacheEntry, want []byte) {
 	t.Helper()
 	got := make([]byte, item.length)
@@ -70,8 +65,6 @@ func assertExtentReaderSeesValue(t *testing.T, provider *Provider, item *cacheEn
 	}
 }
 
-// forceExpiryNow reschedules item's expiration record into the past and runs one
-// expiration pass, so TTL tests do not depend on wall-clock sleeps.
 func forceExpiryNow(t *testing.T, provider *Provider, item *cacheEntry) {
 	t.Helper()
 	provider.expiryMu.Lock()
@@ -81,16 +74,12 @@ func forceExpiryNow(t *testing.T, provider *Provider, item *cacheEntry) {
 		t.Fatalf("entry %q has no pending expiration record", item.key)
 	}
 	record.expiresAt = 1
-	item.expiresAt = 1
 	heap.Fix(&provider.expirations, record.index)
 	provider.expiryMu.Unlock()
 
 	provider.expireReady()
 }
 
-// idleAttempts counts markIdle calls including soft failures, so tests can
-// assert that a region was offered to the kernel without depending on the
-// platform advice succeeding.
 func idleAttempts(provider *Provider) uint64 {
 	stats := provider.Stats()
 
