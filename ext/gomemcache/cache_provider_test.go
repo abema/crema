@@ -115,7 +115,7 @@ func TestMemcachedCacheProvider_GetNilItem(t *testing.T) {
 	t.Parallel()
 
 	provider := &MemcachedCacheProvider{
-		client: &testMemcacheClient{getItem: nil},
+		client: &testMemcacheClient{hasGetItem: true},
 	}
 
 	_, ok, err := provider.Get(context.Background(), "key")

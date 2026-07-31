@@ -70,6 +70,8 @@ type NegativeCacheMetricsProvider interface {
 // BaseMetricsProvider is a no-op metrics implementation.
 type BaseMetricsProvider struct{}
 
+var _ MetricsProvider = BaseMetricsProvider{}
+
 func (BaseMetricsProvider) RecordCacheHit(context.Context)               {}
 func (BaseMetricsProvider) RecordCacheGet(context.Context)               {}
 func (BaseMetricsProvider) RecordCacheSet(context.Context)               {}

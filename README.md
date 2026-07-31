@@ -114,6 +114,12 @@ func main() {
 - `WithNegativeCacheProvider(provider, ttl, isNegative)`: Cache absent loader results through a separate provider
 - `WithLoadErrorCacheProvider(provider, ttl, shouldCache)`: Cache selected load errors through a separate provider
 
+The default singleflight load path runs in an internal goroutine. crema does
+not recover panics from that path, so application-provided loaders, callbacks,
+metrics providers, and cache providers must avoid panics or recover them at
+their own boundary. `WithDirectLoader` runs the loader in the caller's
+goroutine.
+
 ## Negative Cache
 
 Load results are not cached by default. Use `WithNegativeCacheProvider` when a

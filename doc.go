@@ -5,6 +5,12 @@
 // writebacks. When WithDirectLoader is used, the max load timeout is ignored and
 // loaders run with the caller context.
 //
+// The default singleflight load path runs in an internal goroutine and crema
+// does not recover panics. Loaders, callbacks, metrics providers, and cache
+// providers supplied by the application must therefore avoid panics or recover
+// them at their own boundary. WithDirectLoader runs the loader in the caller's
+// goroutine.
+//
 // By default a still-valid cached value is served when a revalidation load
 // fails, instead of propagating the loader error. Use
 // WithRevalidationFallback(false) to always propagate loader errors.
