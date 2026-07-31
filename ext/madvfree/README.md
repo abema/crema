@@ -67,9 +67,10 @@ error. `Stats.IdleErrors`, `Stats.DiscardErrors`, and
 Kernel reclaim and allocator capacity are separate. Reclaiming an idle page
 reduces physical memory pressure, but does not by itself return the
 corresponding extent or slab slot to the provider's allocator. Reclaimed
-entries are removed when `Get` encounters them; small-slab allocation can also
-detect and repair reclaimed slab pages. `Delete`, TTL expiration, `Purge`, and
-`Trim` release entries explicitly.
+entries are removed when `Get` encounters them; small-slab allocation normally
+skips full slabs and probes them for reclaim only when it needs to recover
+logical capacity. `Delete`, TTL expiration, `Purge`, and `Trim` release entries
+explicitly.
 
 `Set` does not run LRU or any other automatic eviction. A workload that only
 writes new keys and never reads or expires old keys can therefore fill the

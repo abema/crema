@@ -5,6 +5,7 @@ package madvfree
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"testing"
@@ -550,6 +551,7 @@ func TestMultiPageSlabPartialReclaimPreservesUnaffectedSlots(t *testing.T) {
 
 func TestMultiPageSlabAllocationRepairsPartialReclaim(t *testing.T) {
 	provider := newTestProvider(t, 64)
+	ctx := context.Background()
 	size, layout := multiPageValueSize(t, provider)
 	value := bytes.Repeat([]byte{0x5a}, size)
 	items := make([]*cacheEntry, layout.slotCount)
@@ -560,6 +562,16 @@ func TestMultiPageSlabAllocationRepairsPartialReclaim(t *testing.T) {
 		}
 		items[slot] = provider.lookup(key)
 	}
+	for filler := 0; ; filler++ {
+		err := provider.Set(ctx, fmt.Sprintf("filler-%d", filler), value, 0)
+		if errors.Is(err, ErrCapacity) {
+			break
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	before := provider.Stats()
 
 	targetPages, valid := layout.slotPayloadPageMask(int(items[0].slot), items[0].length)
 	if !valid {
@@ -591,14 +603,14 @@ func TestMultiPageSlabAllocationRepairsPartialReclaim(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := provider.Set(context.Background(), "replacement", value, 0); err != nil {
+	if err := provider.Set(ctx, "replacement", value, 0); err != nil {
 		t.Fatal(err)
 	}
 	replacement := provider.lookup("replacement")
 	if replacement == nil || replacement.startPage != items[0].startPage {
 		t.Fatalf("replacement did not reuse repaired slab: %#v", replacement)
 	}
-	wantEntries := int64(1)
+	wantEntries := before.Entries + 1
 	for slot, item := range items {
 		payloadPages, maskValid := layout.slotPayloadPageMask(int(item.slot), item.length)
 		if !maskValid {
@@ -609,17 +621,17 @@ func TestMultiPageSlabAllocationRepairsPartialReclaim(t *testing.T) {
 			if old != nil {
 				t.Fatalf("reclaimed slot %d remained indexed", slot)
 			}
+			wantEntries--
 
 			continue
 		}
-		wantEntries++
 		if old == nil {
 			t.Fatalf("unaffected slot %d was removed", slot)
 		}
 	}
 	stats := provider.Stats()
-	if stats.Entries != wantEntries || stats.ReservedBytes != int64(layout.slabBytes()) {
-		t.Fatalf("Stats() after allocation repair = %+v, want entries=%d", stats, wantEntries)
+	if stats.Entries != wantEntries || stats.ReservedBytes != before.ReservedBytes {
+		t.Fatalf("Stats() after allocation repair = %+v, want entries=%d reserved=%d", stats, wantEntries, before.ReservedBytes)
 	}
 	got, found, err := provider.Get(context.Background(), "old-0")
 	if err != nil || !found || !bytes.Equal(got, value) {

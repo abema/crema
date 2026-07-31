@@ -32,7 +32,8 @@
 //
 // Kernel reclaim of an idle page does not itself release the corresponding
 // allocator slot. Reclaimed entries are removed when encountered by Get;
-// small-slab allocation can also detect and repair reclaimed slab pages.
+// small-slab allocation normally skips full slabs and probes them for reclaim
+// only when it needs to recover logical capacity.
 // Delete, TTL expiration, Purge, and Trim release entries explicitly.
 //
 // The provider has no LRU or automatic eviction on Set. A write-only workload

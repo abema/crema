@@ -67,7 +67,7 @@ func (p *Provider) allocateSmall(
 	}
 	layout := p.layouts[classID]
 
-	if item, allocated, err := p.allocateFromSmallPages(classID, layout, key, value, expiresAt); allocated || err != nil {
+	if item, allocated, err := p.allocateFromSmallPages(classID, layout, key, value, expiresAt, false); allocated || err != nil {
 		return item, true, err
 	}
 
@@ -76,7 +76,7 @@ func (p *Provider) allocateSmall(
 	defer creation.Unlock()
 
 	// Another Set may have created a slab while this goroutine waited.
-	if item, allocated, err := p.allocateFromSmallPages(classID, layout, key, value, expiresAt); allocated || err != nil {
+	if item, allocated, err := p.allocateFromSmallPages(classID, layout, key, value, expiresAt, false); allocated || err != nil {
 		return item, true, err
 	}
 
@@ -87,7 +87,7 @@ func (p *Provider) allocateSmall(
 	}
 	p.allocatorMu.Unlock()
 	if !ok {
-		return nil, false, nil
+		return p.allocateFromFullSmallPages(classID, layout, key, value, expiresAt)
 	}
 
 	meta := p.smallPageMetadata(pageID)
@@ -117,12 +117,31 @@ func (p *Provider) allocateSmall(
 	return item, true, nil
 }
 
+func (p *Provider) allocateFromFullSmallPages(
+	classID uint16,
+	layout smallPageLayout,
+	key string,
+	value []byte,
+	expiresAt int64,
+) (*cacheEntry, bool, error) {
+	// Full slabs are normally skipped to avoid reclaim validation on every Set.
+	// Probe them only when a new slab cannot be allocated, so reclaimed slots can
+	// still recover logical capacity under pressure.
+	item, allocated, err := p.allocateFromSmallPages(classID, layout, key, value, expiresAt, true)
+	if allocated || err != nil {
+		return item, true, err
+	}
+
+	return nil, false, nil
+}
+
 func (p *Provider) allocateFromSmallPages(
 	classID uint16,
 	layout smallPageLayout,
 	key string,
 	value []byte,
 	expiresAt int64,
+	validateFull bool,
 ) (*cacheEntry, bool, error) {
 	buffer := p.smallRefs.Get().(*smallPageRefBuffer)
 	p.smallMu.RLock()
@@ -135,7 +154,15 @@ func (p *Provider) allocateFromSmallPages(
 	}()
 
 	for _, reference := range buffer.references {
-		item, stale, allocated, err := p.allocateSmallSlot(reference, classID, layout, key, value, expiresAt)
+		item, stale, allocated, err := p.allocateSmallSlotWithFullValidation(
+			reference,
+			classID,
+			layout,
+			key,
+			value,
+			expiresAt,
+			validateFull,
+		)
 		p.cleanupStaleSmall(stale)
 		if allocated || err != nil {
 			return item, allocated, err
@@ -153,6 +180,19 @@ func (p *Provider) allocateSmallSlot(
 	value []byte,
 	expiresAt int64,
 ) (*cacheEntry, []*cacheEntry, bool, error) {
+	return p.allocateSmallSlotWithFullValidation(reference, classID, layout, key, value, expiresAt, true)
+}
+
+//nolint:cyclop // Full validation and repair have distinct reclaim branches.
+func (p *Provider) allocateSmallSlotWithFullValidation(
+	reference smallPageRef,
+	classID uint16,
+	layout smallPageLayout,
+	key string,
+	value []byte,
+	expiresAt int64,
+	validateFull bool,
+) (*cacheEntry, []*cacheEntry, bool, error) {
 	meta := reference.meta
 	if meta == nil {
 		meta = p.smallPageMetadata(reference.pageID)
@@ -161,6 +201,11 @@ func (p *Provider) allocateSmallSlot(
 	if meta.state != smallPageLive ||
 		meta.classID != classID ||
 		meta.generation != reference.generation {
+		meta.mu.Unlock()
+
+		return nil, nil, false, nil
+	}
+	if !validateFull && meta.used >= layout.slotCount {
 		meta.mu.Unlock()
 
 		return nil, nil, false, nil
