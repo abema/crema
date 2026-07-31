@@ -34,10 +34,7 @@ type memoryBackend interface {
 	// markActive re-pins region so subsequent access is safe, restoring
 	// accounting on platforms that require it. It runs before validation reads.
 	markActive(region []byte) error
-	// canReadIdle reports whether page headers may be read before markActive.
-	// Linux permits this: reclaimed anonymous pages read as zeroes, and an
-	// unreclaimed page remains reclaimable until markActive write-touches it.
-	// Platforms whose idle state forbids access must return false.
+	// canReadIdle reports whether idle pages may be read before markActive.
 	canReadIdle() bool
 	// markIdle marks region reclaimable once it has no active readers.
 	markIdle(region []byte) error
@@ -63,9 +60,7 @@ func (p *Provider) markActive(region []byte) error {
 	return nil
 }
 
-// reactivate performs the platform transition and error accounting without
-// counting a logical ReactivateCall. Linux page-by-page validation uses it
-// several times but records the enclosing region as one call.
+// reactivate performs the platform transition without incrementing ReactivateCalls.
 func (p *Provider) reactivate(region []byte) error {
 	if err := p.backend.markActive(region); err != nil {
 		p.stats.reactivateErrors.Add(1)

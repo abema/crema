@@ -332,7 +332,7 @@ func (p *Provider) precheckAndActivateSmallSlabPages(
 		}
 		activated = true
 
-		// Revalidate after write-touch to close the read/reclaim race.
+		// Revalidate after the write-touch.
 		generation, storedIndex := pageHeader(page)
 		if generation == meta.generation && storedIndex == pageIndex {
 			validPages |= uint32(1) << pageIndex
@@ -402,8 +402,7 @@ func (p *Provider) acquireSmall(item *cacheEntry) (bool, bool, error) {
 	}
 
 	if containsCacheEntry(stale, item) {
-		// Partial slab repair already removed this slot and decremented used.
-		// Complete the stale-item cleanup only after dropping both locks.
+		// Repair already removed this slot.
 		item.state = entryDead
 		if meta.refs == 0 {
 			p.markIdleSmallSlabLocked(item.startPage, layout)

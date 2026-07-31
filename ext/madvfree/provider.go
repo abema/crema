@@ -577,8 +577,7 @@ func (p *Provider) precheckAndActivateExtent(item *cacheEntry) (bool, bool, erro
 		}
 		activated = true
 
-		// The page may have been reclaimed between the speculative read and
-		// write-touch. Only this post-touch header is authoritative.
+		// The page may have been reclaimed before the write-touch.
 		generation, storedIndex := pageHeader(page)
 		if generation != item.generation || storedIndex != pageIndex {
 			p.stats.reactivateCalls.Add(1)

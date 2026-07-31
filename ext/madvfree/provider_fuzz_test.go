@@ -108,9 +108,6 @@ func FuzzProviderStateMachine(f *testing.F) {
 						} else {
 							want, exists := expected[key]
 							if !exists {
-								// An expired entry may remain indexed briefly while
-								// the TTL worker retires it. Get must miss, but that
-								// miss is unrelated to the forced page reclaim.
 								if ok {
 									t.Fatalf(
 										"Get(%q) after unrelated-page reclaim hit an absent model entry: %x",
