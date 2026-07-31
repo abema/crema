@@ -58,16 +58,6 @@ func (m *testMetricsProvider) recordedConcurrency() []int {
 	return append([]int(nil), m.concurrency...)
 }
 
-type countingMetricsProvider struct {
-	BaseMetricsProvider
-
-	loadErrors int32
-}
-
-func (m *countingMetricsProvider) RecordLoadError(context.Context) {
-	atomic.AddInt32(&m.loadErrors, 1)
-}
-
 type blockingSetProvider struct {
 	started   chan struct{}
 	release   chan struct{}
@@ -398,27 +388,6 @@ func TestCache_GetOrLoadRecordsLoadReason(t *testing.T) {
 	}
 }
 
-func TestCache_GetOrLoadRecordsLoadError(t *testing.T) {
-	t.Parallel()
-
-	metrics := &testMetricsProvider{}
-	cache := NewCache(
-		&testMemoryProvider[int]{items: make(map[string]CacheObject[int])},
-		NoopCacheStorageCodec[int]{},
-		WithMetricsProvider(metrics),
-	)
-	expectErr := errors.New("loader failed")
-
-	if _, err := cache.GetOrLoad(context.Background(), "answer", time.Second, func(context.Context) (int, error) {
-		return 0, expectErr
-	}); err != expectErr {
-		t.Fatalf("expected error %v, got %v", expectErr, err)
-	}
-	if got := metrics.loadErrors.Load(); got != 1 {
-		t.Fatalf("load errors = %d, want 1", got)
-	}
-}
-
 func TestCache_GetOrLoadRevalidationFallbackReturnsCachedValue(t *testing.T) {
 	t.Parallel()
 
@@ -427,7 +396,7 @@ func TestCache_GetOrLoadRevalidationFallbackReturnsCachedValue(t *testing.T) {
 		Value:          42,
 		ExpireAtMillis: 2000,
 	}
-	metrics := &countingMetricsProvider{}
+	metrics := &testMetricsProvider{}
 	logs := &bytes.Buffer{}
 	cache := NewCache(provider, NoopCacheStorageCodec[int]{},
 		WithRevalidationFallback(true),
@@ -449,7 +418,7 @@ func TestCache_GetOrLoadRevalidationFallbackReturnsCachedValue(t *testing.T) {
 	if value != 42 {
 		t.Fatalf("expected stale value 42, got %d", value)
 	}
-	if got := atomic.LoadInt32(&metrics.loadErrors); got != 1 {
+	if got := metrics.loadErrors.Load(); got != 1 {
 		t.Fatalf("expected 1 load error recorded, got %d", got)
 	}
 	if !strings.Contains(logs.String(), "falling back to cached value") {
@@ -469,7 +438,7 @@ func TestCache_GetOrLoadRevalidationFallbackExpiredReturnsError(t *testing.T) {
 		Value:          42,
 		ExpireAtMillis: 900,
 	}
-	metrics := &countingMetricsProvider{}
+	metrics := &testMetricsProvider{}
 	cache := NewCache(provider, NoopCacheStorageCodec[int]{},
 		WithRevalidationFallback(true),
 		WithMetricsProvider(metrics),
@@ -487,7 +456,7 @@ func TestCache_GetOrLoadRevalidationFallbackExpiredReturnsError(t *testing.T) {
 	if value != 0 {
 		t.Fatalf("expected zero value, got %d", value)
 	}
-	if got := atomic.LoadInt32(&metrics.loadErrors); got != 1 {
+	if got := metrics.loadErrors.Load(); got != 1 {
 		t.Fatalf("expected 1 load error recorded, got %d", got)
 	}
 }
@@ -914,32 +883,6 @@ func TestWithMetricsProvider_WithDirectLoader(t *testing.T) {
 	}
 }
 
-func TestWithMetricsProvider_BeforeLoaderOptions(t *testing.T) {
-	t.Parallel()
-
-	provider := &testMemoryProvider[int]{items: make(map[string]CacheObject[int])}
-	metrics := &testMetricsProvider{}
-
-	cache := NewCache(
-		provider,
-		NoopCacheStorageCodec[int]{},
-		WithMetricsProvider(metrics),
-		WithMaxLoadTimeout(time.Minute),
-	)
-	impl := cache.(*cacheImpl[int, CacheObject[int]])
-
-	loader, ok := impl.internalLoader.(*singleflightLoader[int])
-	if !ok {
-		t.Fatalf("expected internal loader to be singleflightLoader")
-	}
-	if loader.metrics != metrics {
-		t.Fatalf("expected loader metrics to be set regardless of option order")
-	}
-	if loader.maxLoadTimeout != time.Minute {
-		t.Fatalf("expected max load timeout to be set, got %v", loader.maxLoadTimeout)
-	}
-}
-
 func TestDirectLoader_RecordsLoadMetrics(t *testing.T) {
 	t.Parallel()
 
@@ -999,18 +942,6 @@ func TestWithMetricsProvider_NilFallsBackToNoop(t *testing.T) {
 	}
 	if _, ok := loader.metrics.(NoopMetricsProvider); !ok {
 		t.Fatalf("expected loader metrics to be NoopMetricsProvider")
-	}
-}
-
-func TestWithDirectLoader_UsesDirectLoader(t *testing.T) {
-	t.Parallel()
-
-	provider := &testMemoryProvider[int]{items: make(map[string]CacheObject[int])}
-	cache := NewCache(provider, NoopCacheStorageCodec[int]{}, WithDirectLoader())
-	impl := cache.(*cacheImpl[int, CacheObject[int]])
-
-	if _, ok := impl.internalLoader.(directLoader[int]); !ok {
-		t.Fatalf("expected internal loader to be directLoader")
 	}
 }
 

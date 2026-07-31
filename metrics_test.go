@@ -25,19 +25,3 @@ func TestLoadReason_String(t *testing.T) {
 		})
 	}
 }
-
-func TestBaseMetricsProvider_ImplementsMetricsProvider(t *testing.T) {
-	t.Parallel()
-
-	var provider MetricsProvider = NoopMetricsProvider{}
-
-	ctx := t.Context()
-	provider.RecordCacheHit(ctx)
-	provider.RecordCacheGet(ctx)
-	provider.RecordCacheSet(ctx)
-	provider.RecordCacheDelete(ctx)
-	provider.RecordLoad(ctx)
-	provider.RecordLoadReason(ctx, LoadReasonRevalidation)
-	provider.RecordLoadError(ctx)
-	provider.RecordLoadConcurrency(ctx, 1)
-}

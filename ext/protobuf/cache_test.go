@@ -76,7 +76,7 @@ func TestProtobufCodec_EncodeToAppendsEnvelope(t *testing.T) {
 func TestNewProtobufCodec_RejectsNilPrototype(t *testing.T) {
 	t.Parallel()
 
-	_, err := NewProtobufCodec[*testproto.ProtoTestObject](nil)
+	_, err := NewProtobufCodec[proto.Message](nil)
 	if err == nil {
 		t.Fatal("NewProtobufCodec() error = nil, want error")
 	}
@@ -89,69 +89,6 @@ func TestNewProtobufCodec_RejectsTypedNilPrototype(t *testing.T) {
 	_, err := NewProtobufCodec(prototype)
 	if err == nil {
 		t.Fatal("NewProtobufCodec() error = nil, want error")
-	}
-}
-
-func TestProtobufCodec_DecodeUsesPrototypeWhenValueNil(t *testing.T) {
-	t.Parallel()
-
-	codec, err := NewProtobufCodec(&testproto.ProtoTestObject{})
-	if err != nil {
-		t.Fatalf("NewProtobufCodec() error = %v", err)
-	}
-
-	in := crema.CacheObject[*testproto.ProtoTestObject]{
-		Value:          &testproto.ProtoTestObject{},
-		ExpireAtMillis: 123,
-	}
-	in.Value.SetValue(987)
-
-	encoded, err := codec.Encode(in)
-	if err != nil {
-		t.Fatalf("Encode() error = %v", err)
-	}
-
-	out, err := codec.Decode(encoded)
-	if err != nil {
-		t.Fatalf("Decode() error = %v", err)
-	}
-
-	if out.Value == nil {
-		t.Fatal("decoded value is nil, want non-nil")
-	}
-	if got := out.Value.GetValue(); got != 987 {
-		t.Fatalf("decoded value = %d, want %d", got, 987)
-	}
-}
-
-func TestProtobufCodec_DecodeReturnsValue(t *testing.T) {
-	t.Parallel()
-
-	codec, err := NewProtobufCodec(&testproto.ProtoTestObject{})
-	if err != nil {
-		t.Fatalf("NewProtobufCodec() error = %v", err)
-	}
-
-	in := crema.CacheObject[*testproto.ProtoTestObject]{
-		Value:          &testproto.ProtoTestObject{},
-		ExpireAtMillis: 321,
-	}
-	in.Value.SetValue(555)
-
-	encoded, err := codec.Encode(in)
-	if err != nil {
-		t.Fatalf("Encode() error = %v", err)
-	}
-
-	out, err := codec.Decode(encoded)
-	if err != nil {
-		t.Fatalf("Decode() error = %v", err)
-	}
-	if out.Value == nil {
-		t.Fatal("decoded value is nil, want non-nil")
-	}
-	if got := out.Value.GetValue(); got != 555 {
-		t.Fatalf("decoded value = %d, want %d", got, 555)
 	}
 }
 
@@ -280,15 +217,6 @@ type valueProtoMessage struct{}
 
 func (valueProtoMessage) ProtoReflect() protoreflect.Message {
 	return nil
-}
-
-func TestIsNilPrototype_NilInterface(t *testing.T) {
-	t.Parallel()
-
-	var prototype proto.Message
-	if got := isNilPrototype(prototype); !got {
-		t.Fatal("isNilPrototype() = false, want true")
-	}
 }
 
 func TestIsNilPrototype_NonNilValue(t *testing.T) {

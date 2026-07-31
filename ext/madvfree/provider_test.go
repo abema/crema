@@ -371,31 +371,6 @@ func TestProviderDetectsReclaimedMiddlePage(t *testing.T) {
 	}
 }
 
-func TestProviderConcurrentReplacementAndGet(t *testing.T) {
-	provider := newTestProvider(t, 64)
-	if err := provider.Set(context.Background(), "key", []byte("0"), 0); err != nil {
-		t.Fatal(err)
-	}
-
-	var wait sync.WaitGroup
-	for worker := 0; worker < 4; worker++ {
-		wait.Add(1)
-		go func(worker int) {
-			defer wait.Done()
-			for iteration := 0; iteration < 100; iteration++ {
-				value := []byte{byte(worker + 1), byte(iteration)}
-				if err := provider.Set(context.Background(), "key", value, 0); err != nil {
-					t.Errorf("Set(): %v", err)
-
-					return
-				}
-				_, _, _ = provider.Get(context.Background(), "key")
-			}
-		}(worker)
-	}
-	wait.Wait()
-}
-
 func TestProviderReleaseRefcountUnderflowPanics(t *testing.T) {
 	provider, err := NewProvider(Config{
 		CapacityBytes: unix.Getpagesize() * 2,

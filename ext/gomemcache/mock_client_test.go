@@ -12,6 +12,7 @@ type testMemcacheClient struct {
 	items      map[string]testMemcacheItem
 	lastSetTTL int32
 	getItem    *memcache.Item
+	hasGetItem bool
 	getErr     error
 	deleteErr  error
 }
@@ -29,7 +30,7 @@ func (t *testMemcacheClient) Get(key string) (*memcache.Item, error) {
 	if t.getErr != nil {
 		return nil, t.getErr
 	}
-	if t.getItem != nil || t.getErr != nil {
+	if t.hasGetItem {
 		return t.getItem, nil
 	}
 
