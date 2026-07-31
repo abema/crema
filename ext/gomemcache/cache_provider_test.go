@@ -3,9 +3,12 @@ package gomemcache
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math"
 	"testing"
 	"time"
+
+	"github.com/bradfitz/gomemcache/memcache"
 )
 
 func TestMemcachedCacheProvider_GetSetDelete(t *testing.T) {
@@ -89,6 +92,25 @@ func TestMemcachedCacheProvider_GetError(t *testing.T) {
 	}
 }
 
+func TestMemcachedCacheProvider_GetWrappedCacheMiss(t *testing.T) {
+	t.Parallel()
+
+	provider := &MemcachedCacheProvider{
+		client: &testMemcacheClient{getErr: fmt.Errorf("wrapped: %w", memcache.ErrCacheMiss)},
+	}
+
+	value, ok, err := provider.Get(context.Background(), "key")
+	if err != nil {
+		t.Fatalf("Get() error = %v, want nil", err)
+	}
+	if ok {
+		t.Fatal("Get() ok = true, want false")
+	}
+	if value != nil {
+		t.Fatalf("Get() value = %q, want nil", value)
+	}
+}
+
 func TestMemcachedCacheProvider_GetNilItem(t *testing.T) {
 	t.Parallel()
 
@@ -114,6 +136,18 @@ func TestMemcachedCacheProvider_DeleteError(t *testing.T) {
 
 	if err := provider.Delete(context.Background(), "key"); err == nil {
 		t.Fatal("expected error")
+	}
+}
+
+func TestMemcachedCacheProvider_DeleteWrappedCacheMiss(t *testing.T) {
+	t.Parallel()
+
+	provider := &MemcachedCacheProvider{
+		client: &testMemcacheClient{deleteErr: fmt.Errorf("wrapped: %w", memcache.ErrCacheMiss)},
+	}
+
+	if err := provider.Delete(context.Background(), "key"); err != nil {
+		t.Fatalf("Delete() error = %v, want nil", err)
 	}
 }
 
