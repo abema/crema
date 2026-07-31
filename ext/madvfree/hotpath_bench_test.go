@@ -25,10 +25,6 @@ var hotPathTTLs = []struct {
 }
 
 // BenchmarkProviderSetParallel measures replacement Sets from many goroutines.
-//
-// Each worker owns a private ring of keys, so index shards, slab metadata, and
-// entries are uncontended by construction: what remains shared is the global
-// stats counters and the expiration heap.
 func BenchmarkProviderSetParallel(b *testing.B) {
 	for _, size := range []int{64, 4 << 10} {
 		for _, test := range hotPathTTLs {
@@ -56,8 +52,7 @@ func BenchmarkProviderSetParallel(b *testing.B) {
 	}
 }
 
-// BenchmarkProviderMixedParallel measures a read-heavy mix, where every fourth
-// operation replaces an entry and therefore retires the previous one.
+// BenchmarkProviderMixedParallel measures a read-heavy mixed workload.
 func BenchmarkProviderMixedParallel(b *testing.B) {
 	for _, size := range []int{64, 4 << 10} {
 		for _, test := range hotPathTTLs {

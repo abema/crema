@@ -272,9 +272,6 @@ func assertExpiryHeapInvariants(t *testing.T, provider *Provider, want int) {
 	}
 }
 
-// TestProviderExpiryHeapConsistentUnderMixedTTL mixes keys with and without a
-// TTL across goroutines. Entries without a TTL bypass expiryMu, so this asserts
-// that skipping the lock still leaves exactly one record per indexed TTL entry.
 func TestProviderExpiryHeapConsistentUnderMixedTTL(t *testing.T) {
 	provider := newTestProvider(t, 64)
 	ctx := context.Background()
@@ -288,8 +285,6 @@ func TestProviderExpiryHeapConsistentUnderMixedTTL(t *testing.T) {
 		group.Add(1)
 		go func(worker int) {
 			defer group.Done()
-			// A one-hour TTL never fires during the test, so every surviving
-			// record must still be reachable from its entry when the workers stop.
 			ttl := time.Duration(0)
 			if worker%2 == 0 {
 				ttl = time.Hour
