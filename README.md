@@ -111,38 +111,40 @@ func main() {
 - `WithRevalidationFallback(enabled)`: Enable or disable revalidation fallback (enabled by default)
 - `WithLogger(logger)`: Override warning logger for get/set failures
 - `WithMetricsProvider(metrics)`: Record cache and loader events
-- `WithLoadErrorCacheProvider(provider, ttl, shouldCache)`: Cache selected load errors
 - `WithNegativeCacheProvider(provider, ttl, isNegative)`: Cache absent-value errors through a separate provider
+- `WithLoadErrorCacheProvider(provider, ttl, shouldCache)`: Cache selected load errors through a separate provider
 
 ## Negative Cache
 
-`WithLoadErrorCacheProvider` keeps selected load errors briefly to suppress repeated loads:
+Load errors are not cached by default. Use `WithNegativeCacheProvider` when a
+loader error means that the value does not exist, such as `sql.ErrNoRows` or an
+application-specific `ErrNotFound`.
 
 ```go
 cache := crema.NewCache(
 	provider,
 	crema.NoopCacheStorageCodec[int]{},
-	crema.WithLoadErrorCacheProvider[int, crema.CacheObject[int]](negativeProvider, 500*time.Millisecond, func(err error) bool {
-		return !errors.Is(err, ErrNotFound)
+	crema.WithNegativeCacheProvider(negativeProvider, 500*time.Millisecond, func(err error) bool {
+		return errors.Is(err, ErrNotFound)
 	}),
 )
 ```
 
-- While a negative entry is live, `GetOrLoad` skips the loader and returns the
-  same error, preserving `errors.Is` and `errors.As`.
-- The negative TTL is independent of the value TTL passed to `GetOrLoad`.
-- With the default revalidation fallback, a still-valid value wins over a
-  negative entry.
-- Successful `Set` and `Delete` operations invalidate the negative entry.
-- The negative provider is a `CacheProvider[error]`; configure its capacity and
-  eviction policy independently. An in-process provider such as Ristretto keeps
+- `Get` does not use this cache. After a value-cache miss, `GetOrLoad` returns a
+  live cached error without invoking the loader.
+- The error TTL is independent of the value TTL passed to `GetOrLoad`.
+- A still-valid value wins over an error entry during revalidation.
+- Successful `Set` and `Delete` invalidate the error entry.
+- The provider is a `CacheProvider[error]`; configure its capacity and eviction
+  policy independently. An in-process provider such as Ristretto preserves
   error identity for `errors.Is` and `errors.As`.
-- A `NegativeCacheMetricsProvider` can record negative-cache hits and stores.
+- A `NegativeCacheMetricsProvider` can record error-cache hits and stores.
 
-`WithNegativeCacheProvider` has the usual negative-cache semantics: its
-`isNegative` predicate selects only errors that mean a value is absent, such as
-`sql.ErrNoRows`. It shares the same implementation as the load-error cache;
-when both options are provided, the last one wins.
+`WithLoadErrorCacheProvider` is the more general form. Its `shouldCache`
+predicate may select errors other than absence errors, for example a short-lived
+rate-limit or backend-unavailable error. Use it deliberately: caching those
+errors also suppresses retries until the error TTL expires. The two options are
+alternatives; if both are supplied, the last one wins.
 
 ## Implementations
 
