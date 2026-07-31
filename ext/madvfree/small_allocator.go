@@ -472,29 +472,14 @@ func (p *Provider) finalizeSmallLocked(item *cacheEntry, meta *smallPageMeta) {
 		meta.entries[slot] == item
 	var stale []*cacheEntry
 	if slotMatches && meta.refs == 0 {
-		validPages, err := p.touchAndValidateSmallSlabPages(item.startPage, meta, layout)
-		if err != nil {
-			p.finalizeReclaimedSmallLocked(item, meta)
-
+		var finalized bool
+		stale, slotMatches, finalized = p.repairRetiredSmallSlabLocked(item, meta, layout)
+		if finalized {
 			return
-		}
-		invalidPages := layout.allPageMask() &^ validPages
-		if invalidPages != 0 {
-			// Keep slots whose payload pages survived.
-			stale = p.repairSmallSlabPagesLocked(meta, item.startPage, layout, invalidPages)
-			slotMatches = meta.entries[slot] == item
 		}
 	}
 	if slotMatches {
-		allocated, valid := layout.slotAllocated(slab, slot)
-		if !valid || !allocated || meta.used <= 0 {
-			panic("madvfree: small bitmap/used metadata mismatch")
-		}
-		if !layout.clearSlotMetadata(slab, slot) {
-			panic("madvfree: failed to clear valid small slot metadata")
-		}
-		meta.entries[slot] = nil
-		meta.used--
+		clearSmallSlotLocked(meta, slab, layout, slot)
 	}
 	item.freed = true
 	item.state = entryDead
@@ -527,6 +512,46 @@ func (p *Provider) finalizeSmallLocked(item *cacheEntry, meta *smallPageMeta) {
 		p.stats.reservedBytes.Add(-int64(layout.slabBytes()))
 		p.allocatorMu.Unlock()
 	}
+}
+
+func clearSmallSlotLocked(
+	meta *smallPageMeta,
+	slab []byte,
+	layout smallPageLayout,
+	slot int,
+) {
+	allocated, valid := layout.slotAllocated(slab, slot)
+	if !valid || !allocated || meta.used <= 0 {
+		panic("madvfree: small bitmap/used metadata mismatch")
+	}
+	if !layout.clearSlotMetadata(slab, slot) {
+		panic("madvfree: failed to clear valid small slot metadata")
+	}
+	meta.entries[slot] = nil
+	meta.used--
+}
+
+// repairRetiredSmallSlabLocked repairs reclaimed pages before retiring item.
+// It consumes item.mu and meta.mu when reactivation fails.
+func (p *Provider) repairRetiredSmallSlabLocked(
+	item *cacheEntry,
+	meta *smallPageMeta,
+	layout smallPageLayout,
+) (stale []*cacheEntry, slotMatches, finalized bool) {
+	validPages, err := p.touchAndValidateSmallSlabPages(item.startPage, meta, layout)
+	if err != nil {
+		p.finalizeReclaimedSmallLocked(item, meta)
+
+		return nil, false, true
+	}
+	invalidPages := layout.allPageMask() &^ validPages
+	if invalidPages == 0 {
+		return nil, true, false
+	}
+
+	stale = p.repairSmallSlabPagesLocked(meta, item.startPage, layout, invalidPages)
+
+	return stale, meta.entries[item.slot] == item, false
 }
 
 // finalizeReclaimedSmallLocked consumes both item.mu and meta.mu.
