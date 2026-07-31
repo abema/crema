@@ -523,29 +523,82 @@ func (p *Provider) acquireExtent(item *cacheEntry) (bool, bool, error) {
 		return false, false, nil
 	}
 	if item.refs == 0 {
-		// Re-pin the whole extent before validating: a mismatch on a later page
-		// can occur after earlier pages were re-pinned. The failed acquire
-		// retires the whole extent, whose discard makes that transient re-pin
-		// harmless.
-		if err := p.markActive(p.extentBytes(item.startPage, item.pageCount)); err != nil {
+		reclaimed, valid, err := p.activateAndValidateExtent(item)
+		if err != nil {
 			return false, false, err
 		}
-		reclaimed := false
-		for pageIndex := uint32(0); pageIndex < item.pageCount; pageIndex++ {
-			page := p.page(item.startPage + pageIndex)
-			generation := binary.LittleEndian.Uint64(page[generationOffset:pageIndexOffset])
-			storedIndex := binary.LittleEndian.Uint32(page[pageIndexOffset:touchOffset])
-			if generation != item.generation || storedIndex != pageIndex {
-				reclaimed = reclaimed || generation == 0
-				item.state = entryDead
+		if !valid {
+			item.state = entryDead
 
-				return reclaimed, false, nil
-			}
+			return reclaimed, false, nil
 		}
 	}
 	item.refs++
 
 	return false, true, nil
+}
+
+func (p *Provider) activateAndValidateExtent(item *cacheEntry) (bool, bool, error) {
+	if p.backend.canReadIdle() {
+		return p.precheckAndActivateExtent(item)
+	}
+
+	return p.activateThenValidateExtent(item)
+}
+
+func (p *Provider) activateThenValidateExtent(item *cacheEntry) (bool, bool, error) {
+	if err := p.markActive(p.extentBytes(item.startPage, item.pageCount)); err != nil {
+		return false, false, err
+	}
+	for pageIndex := uint32(0); pageIndex < item.pageCount; pageIndex++ {
+		generation, storedIndex := pageHeader(p.page(item.startPage + pageIndex))
+		if generation != item.generation || storedIndex != pageIndex {
+			return generation == 0, false, nil
+		}
+	}
+
+	return false, true, nil
+}
+
+func (p *Provider) precheckAndActivateExtent(item *cacheEntry) (bool, bool, error) {
+	activated := false
+	for pageIndex := uint32(0); pageIndex < item.pageCount; pageIndex++ {
+		page := p.page(item.startPage + pageIndex)
+		generation := pageGeneration(page)
+		if generation != item.generation {
+			if activated {
+				p.stats.reactivateCalls.Add(1)
+			}
+
+			return generation == 0, false, nil
+		}
+		if err := p.reactivate(page); err != nil {
+			return false, false, err
+		}
+		activated = true
+
+		// The page may have been reclaimed before the write-touch.
+		generation, storedIndex := pageHeader(page)
+		if generation != item.generation || storedIndex != pageIndex {
+			p.stats.reactivateCalls.Add(1)
+
+			return generation == 0, false, nil
+		}
+	}
+	if activated {
+		p.stats.reactivateCalls.Add(1)
+	}
+
+	return false, true, nil
+}
+
+func pageHeader(page []byte) (uint64, uint32) {
+	return pageGeneration(page),
+		binary.LittleEndian.Uint32(page[pageIndexOffset:touchOffset])
+}
+
+func pageGeneration(page []byte) uint64 {
+	return binary.LittleEndian.Uint64(page[generationOffset:pageIndexOffset])
 }
 
 func (p *Provider) release(item *cacheEntry) {

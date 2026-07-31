@@ -49,6 +49,8 @@ func (b *linuxBackend) pageSize() int { return b.ps }
 
 func (b *linuxBackend) injectMadvise(fn madviseFunc) { b.madvise = fn }
 
+func (b *linuxBackend) canReadIdle() bool { return true }
+
 func (b *linuxBackend) mapArena(size int) ([]byte, error) {
 	arena, err := unix.Mmap(
 		-1,

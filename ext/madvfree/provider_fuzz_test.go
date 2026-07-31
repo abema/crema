@@ -107,7 +107,18 @@ func FuzzProviderStateMachine(f *testing.F) {
 							delete(expected, key)
 						} else {
 							want, exists := expected[key]
-							if !ok || !exists || !bytes.Equal(got, want) {
+							if !exists {
+								if ok {
+									t.Fatalf(
+										"Get(%q) after unrelated-page reclaim hit an absent model entry: %x",
+										key,
+										got,
+									)
+								}
+
+								break
+							}
+							if !ok || !bytes.Equal(got, want) {
 								t.Fatalf(
 									"Get(%q) after unrelated-page reclaim = (%x, %v), want %x",
 									key,

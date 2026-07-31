@@ -53,6 +53,8 @@ func (b *darwinBackend) pageSize() int { return b.ps }
 
 func (b *darwinBackend) injectMadvise(fn madviseFunc) { b.madvise = fn }
 
+func (b *darwinBackend) canReadIdle() bool { return false }
+
 func (b *darwinBackend) mapArena(size int) ([]byte, error) {
 	// Darwin has no MAP_NORESERVE; anonymous mappings are already lazily backed.
 	// It also has no per-region transparent-huge-page or core-dump advice, so

@@ -34,6 +34,8 @@ type memoryBackend interface {
 	// markActive re-pins region so subsequent access is safe, restoring
 	// accounting on platforms that require it. It runs before validation reads.
 	markActive(region []byte) error
+	// canReadIdle reports whether idle pages may be read before markActive.
+	canReadIdle() bool
 	// markIdle marks region reclaimable once it has no active readers.
 	markIdle(region []byte) error
 	// discard forgets region's contents and releases its pages where supported.
@@ -50,12 +52,21 @@ type injectableBackend interface {
 
 // markActive re-pins region and records the operation for Stats.
 func (p *Provider) markActive(region []byte) error {
+	if err := p.reactivate(region); err != nil {
+		return err
+	}
+	p.stats.reactivateCalls.Add(1)
+
+	return nil
+}
+
+// reactivate performs the platform transition without incrementing ReactivateCalls.
+func (p *Provider) reactivate(region []byte) error {
 	if err := p.backend.markActive(region); err != nil {
 		p.stats.reactivateErrors.Add(1)
 
 		return fmt.Errorf("madvfree: reactivate region: %w", err)
 	}
-	p.stats.reactivateCalls.Add(1)
 
 	return nil
 }

@@ -12,6 +12,21 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+type reclaimOnActivateBackend struct {
+	memoryBackend
+	touches int
+}
+
+func (b *reclaimOnActivateBackend) markActive(page []byte) error {
+	b.touches++
+	clear(page)
+	page[touchOffset] ^= 1
+
+	return nil
+}
+
+func (b *reclaimOnActivateBackend) canReadIdle() bool { return true }
+
 func TestProbeMADVFreeSequence(t *testing.T) {
 	t.Parallel()
 
@@ -133,6 +148,115 @@ func TestRuntimeMadviseFailuresAreSoftForExtent(t *testing.T) {
 	}
 	if stats.Entries != 0 || stats.ReservedBytes != 0 {
 		t.Fatalf("accounting after failed madvise = %+v", stats)
+	}
+}
+
+func TestExtentPrecheckDoesNotTouchReclaimedOrLaterPages(t *testing.T) {
+	pageSize := unix.Getpagesize()
+	provider, err := NewProvider(Config{
+		CapacityBytes: pageSize * 8,
+		SizeClasses:   []int{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = provider.Close()
+	})
+
+	value := bytes.Repeat([]byte{0xa5}, pageSize*2)
+	if err := provider.Set(context.Background(), "key", value, 0); err != nil {
+		t.Fatal(err)
+	}
+	item := provider.lookup("key")
+	if item == nil || item.pageCount < 3 {
+		t.Fatalf("extent = %#v, want at least three pages", item)
+	}
+	reclaimedPage := provider.page(item.startPage + 1)
+	laterPage := provider.page(item.startPage + 2)
+	if err := simulateReclaim(reclaimedPage); err != nil {
+		t.Fatal(err)
+	}
+
+	reclaimed, acquired, err := provider.acquireExtent(item)
+	if err != nil || acquired || !reclaimed {
+		t.Fatalf("acquireExtent() = (%v, %v, %v), want (true, false, nil)", reclaimed, acquired, err)
+	}
+	if got := reclaimedPage[touchOffset]; got != 0 {
+		t.Fatalf("reclaimed page touch byte = %d, want 0", got)
+	}
+	if got := laterPage[touchOffset]; got != 0 {
+		t.Fatalf("page after reclaimed page touch byte = %d, want 0", got)
+	}
+	if got := provider.page(item.startPage)[touchOffset]; got != 1 {
+		t.Fatalf("valid page before reclaimed page touch byte = %d, want 1", got)
+	}
+
+	provider.finalize(item)
+}
+
+func TestExtentPrecheckRevalidatesAfterTouch(t *testing.T) {
+	provider, err := NewProvider(Config{
+		CapacityBytes: unix.Getpagesize() * 2,
+		SizeClasses:   []int{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = provider.Close()
+	})
+	if err := provider.Set(context.Background(), "key", []byte("value"), 0); err != nil {
+		t.Fatal(err)
+	}
+	item := provider.lookup("key")
+	backend := &reclaimOnActivateBackend{memoryBackend: provider.backend}
+	provider.backend = backend
+
+	reclaimed, acquired, err := provider.acquireExtent(item)
+	if err != nil || acquired || !reclaimed {
+		t.Fatalf("acquireExtent() = (%v, %v, %v), want (true, false, nil)", reclaimed, acquired, err)
+	}
+	if backend.touches != 1 {
+		t.Fatalf("touch calls = %d, want 1", backend.touches)
+	}
+
+	provider.finalize(item)
+}
+
+func TestSmallSlabPrecheckDoesNotTouchReclaimedPage(t *testing.T) {
+	provider := newTestProvider(t, 64)
+	size, layout := multiPageValueSize(t, provider)
+	value := bytes.Repeat([]byte{0xa5}, size)
+	if err := provider.Set(context.Background(), "key", value, 0); err != nil {
+		t.Fatal(err)
+	}
+	item := provider.lookup("key")
+	if item == nil || item.kind != allocationSmall || layout.pageCount < 2 {
+		t.Fatalf("small item = %#v, layout = %#v", item, layout)
+	}
+	const reclaimedOffset = uint32(1)
+	reclaimedPage := provider.page(item.startPage + reclaimedOffset)
+	if err := simulateReclaim(reclaimedPage); err != nil {
+		t.Fatal(err)
+	}
+
+	validPages, err := provider.touchAndValidateSmallSlabPages(
+		item.startPage,
+		item.smallMeta,
+		layout,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if validPages&(uint32(1)<<reclaimedOffset) != 0 {
+		t.Fatalf("valid page mask %#x includes reclaimed page %d", validPages, reclaimedOffset)
+	}
+	if got := reclaimedPage[touchOffset]; got != 0 {
+		t.Fatalf("reclaimed page touch byte = %d, want 0", got)
+	}
+	if got := provider.page(item.startPage)[touchOffset]; got != 1 {
+		t.Fatalf("valid slab page touch byte = %d, want 1", got)
 	}
 }
 
