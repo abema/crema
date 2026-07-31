@@ -192,7 +192,7 @@ func TestExtentPrecheckDoesNotTouchReclaimedOrLaterPages(t *testing.T) {
 		t.Fatalf("valid page before reclaimed page touch byte = %d, want 1", got)
 	}
 
-	provider.finalize(item)
+	provider.finalizeExtent(item)
 }
 
 func TestExtentPrecheckRevalidatesAfterTouch(t *testing.T) {
@@ -221,7 +221,7 @@ func TestExtentPrecheckRevalidatesAfterTouch(t *testing.T) {
 		t.Fatalf("touch calls = %d, want 1", backend.touches)
 	}
 
-	provider.finalize(item)
+	provider.finalizeExtent(item)
 }
 
 func TestSmallSlabPrecheckDoesNotTouchReclaimedPage(t *testing.T) {
