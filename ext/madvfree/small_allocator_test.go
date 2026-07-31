@@ -60,6 +60,49 @@ func TestSmallAllocatorPacksSlotsIntoPages(t *testing.T) {
 	assertNoSmallPageMetadata(t, provider)
 }
 
+func TestSmallAllocatorProbesFullSlabsAfterGeometricGrowth(t *testing.T) {
+	provider := newTestProvider(t, 4)
+	ctx := context.Background()
+	layout := provider.layouts[0]
+	value := []byte("small")
+
+	for slot := 0; slot < layout.slotCount; slot++ {
+		if err := provider.Set(ctx, fmt.Sprintf("old-%d", slot), value, 0); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := provider.Set(ctx, "overflow", value, 0); err != nil {
+		t.Fatal(err)
+	}
+	target := provider.lookup("old-0")
+	if target == nil {
+		t.Fatal("target entry was not indexed")
+	}
+	provider.smallMu.RLock()
+	classPages := len(provider.classPages[target.classID])
+	provider.smallMu.RUnlock()
+	if classPages != 2 {
+		t.Fatalf("class pages=%d, want 2", classPages)
+	}
+	if err := simulateReclaim(provider.page(target.startPage)); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := provider.Set(ctx, "replacement", value, 0); err != nil {
+		t.Fatal(err)
+	}
+	replacement := provider.lookup("replacement")
+	if replacement == nil || replacement.startPage != target.startPage {
+		t.Fatalf("replacement=%#v, want reclaimed slab page=%d", replacement, target.startPage)
+	}
+	if provider.lookup("old-0") != nil {
+		t.Fatal("reclaimed entry remained indexed")
+	}
+	if got, found, err := provider.Get(ctx, "overflow"); err != nil || !found || !bytes.Equal(got, value) {
+		t.Fatalf("Get(overflow) = (%q, %v, %v), want value", got, found, err)
+	}
+}
+
 func TestSmallAllocatorReleasedMetadataRejectsStaleReference(t *testing.T) {
 	provider := newTestProvider(t, 1)
 	ctx := context.Background()
