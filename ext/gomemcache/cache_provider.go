@@ -2,6 +2,7 @@ package gomemcache
 
 import (
 	"context"
+	"errors"
 	"math"
 	"time"
 
@@ -25,7 +26,7 @@ func NewMemcachedCacheProvider(client memcacheClient) *MemcachedCacheProvider {
 func (p *MemcachedCacheProvider) Get(_ context.Context, key string) ([]byte, bool, error) {
 	item, err := p.client.Get(key)
 	if err != nil {
-		if err == memcache.ErrCacheMiss {
+		if errors.Is(err, memcache.ErrCacheMiss) {
 			return nil, false, nil
 		}
 
@@ -50,7 +51,7 @@ func (p *MemcachedCacheProvider) Set(_ context.Context, key string, value []byte
 
 // Delete removes a cached value from Memcached.
 func (p *MemcachedCacheProvider) Delete(_ context.Context, key string) error {
-	if err := p.client.Delete(key); err != nil && err != memcache.ErrCacheMiss {
+	if err := p.client.Delete(key); err != nil && !errors.Is(err, memcache.ErrCacheMiss) {
 		return err
 	}
 
