@@ -633,11 +633,7 @@ func (p *Provider) releaseExtent(item *cacheEntry) {
 	item.mu.Unlock()
 }
 
-// retire marks item for removal and frees it once no reader holds a reference.
-//
-// It is also the tail of a failed acquire: acquire leaves the entry in a
-// non-live state, so retiring it there frees it as soon as its last reader
-// leaves.
+// retire frees an entry once no reader holds a reference.
 func (p *Provider) retire(item *cacheEntry) {
 	if item.kind == allocationSmall {
 		p.retireSmall(item)
@@ -796,7 +792,7 @@ func (p *Provider) removeIfSame(key string, expected *cacheEntry) bool {
 	return true
 }
 
-// drainIndex removes every indexed entry and returns them for retirement.
+// drainIndex removes and returns indexed entries.
 func (p *Provider) drainIndex() []*cacheEntry {
 	var result []*cacheEntry
 	for shardIndex := range p.shards {
