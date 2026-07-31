@@ -60,6 +60,13 @@ type MetricsProvider interface {
 	RecordLoadConcurrency(ctx context.Context, concurrency int)
 }
 
+// NegativeCacheMetricsProvider optionally receives negative-cache events.
+type NegativeCacheMetricsProvider interface {
+	MetricsProvider
+	RecordNegativeCacheHit(ctx context.Context)
+	RecordNegativeCacheSet(ctx context.Context)
+}
+
 // BaseMetricsProvider is a no-op metrics implementation.
 type BaseMetricsProvider struct{}
 

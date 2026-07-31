@@ -35,6 +35,10 @@ type cacheImpl[V any, S any] struct {
 	revalidationWindowMilliseconds int64
 	maxLoadTimeout                 time.Duration
 	revalidationFallback           bool
+	negativeCache                  *negativeCache
+	negativeCacheTTL               time.Duration
+	negativeCacheProvider          CacheProvider[error]
+	negativeCacheErrorPredicate    LoadErrorCacheErrorPredicate
 	random                         func() float64 // must goroutine safe
 	useDirectLoader                bool
 }
@@ -108,6 +112,45 @@ func WithRevalidationFallback[V any, S any](enabled bool) CacheOption[V, S] {
 	}
 }
 
+// WithLoadErrorCacheProvider caches errors selected by shouldCache through provider.
+func WithLoadErrorCacheProvider[V any, S any](
+	provider CacheProvider[error],
+	ttl time.Duration,
+	shouldCache LoadErrorCacheErrorPredicate,
+) CacheOption[V, S] {
+	return func(c *cacheImpl[V, S]) {
+		if provider == nil || shouldCache == nil || ttl <= 0 {
+			c.negativeCacheProvider = nil
+			c.negativeCacheTTL = 0
+
+			return
+		}
+		c.negativeCacheProvider = provider
+		c.negativeCacheTTL = ttl
+		c.negativeCacheErrorPredicate = shouldCache
+	}
+}
+
+// WithNegativeCacheProvider caches errors selected by isNegative as absent values.
+// It replaces any load-error-cache provider configured by earlier options.
+func WithNegativeCacheProvider[V any, S any](
+	provider CacheProvider[error],
+	ttl time.Duration,
+	isNegative NegativeCacheErrorPredicate,
+) CacheOption[V, S] {
+	return func(c *cacheImpl[V, S]) {
+		if provider == nil || isNegative == nil || ttl <= 0 {
+			c.negativeCacheProvider = nil
+			c.negativeCacheTTL = 0
+
+			return
+		}
+		c.negativeCacheProvider = provider
+		c.negativeCacheTTL = ttl
+		c.negativeCacheErrorPredicate = LoadErrorCacheErrorPredicate(isNegative)
+	}
+}
+
 // NewCache constructs a Cache with defaults and optional overrides.
 func NewCache[V any, S any](provider CacheProvider[S], codec CacheStorageCodec[V, S], opts ...CacheOption[V, S]) Cache[V, S] {
 	steepness, revalidationWindowMilliseconds := calculateSteepnessAndRevalidationWindow(defaultRevalidationWindowMilliseconds)
@@ -129,6 +172,9 @@ func NewCache[V any, S any](provider CacheProvider[S], codec CacheStorageCodec[V
 			continue
 		}
 		opt(cache)
+	}
+	if cache.negativeCacheProvider != nil && cache.negativeCacheTTL > 0 {
+		cache.negativeCache = newNegativeCache(cache.negativeCacheProvider)
 	}
 	if cache.useDirectLoader {
 		cache.internalLoader = newDirectLoader[V](cache.metrics)
@@ -173,18 +219,37 @@ func (c *cacheImpl[V, S]) Set(ctx context.Context, key string, value CacheObject
 		return nil
 	}
 
-	return c.provider.Set(ctx, key, encoded, ttl)
+	if err := c.provider.Set(ctx, key, encoded, ttl); err != nil {
+		return err
+	}
+	if c.negativeCache != nil {
+		if err := c.negativeCache.invalidate(ctx, key); err != nil {
+			c.logger.Warn("failed to invalidate negative cache", slog.String("key", key), slog.String("error", err.Error()))
+		}
+	}
+
+	return nil
 }
 
-// Delete removes a cached entry for key.
+// Delete removes a cached entry for key, including any negative cache entry.
 func (c *cacheImpl[V, S]) Delete(ctx context.Context, key string) error {
 	c.metrics.RecordCacheDelete(ctx)
 
-	return c.provider.Delete(ctx, key)
+	if err := c.provider.Delete(ctx, key); err != nil {
+		return err
+	}
+	if c.negativeCache != nil {
+		if err := c.negativeCache.invalidate(ctx, key); err != nil {
+			c.logger.Warn("failed to invalidate negative cache", slog.String("key", key), slog.String("error", err.Error()))
+		}
+	}
+
+	return nil
 }
 
 // GetOrLoad returns a cached value or uses loader when missing or revalidating.
 func (c *cacheImpl[V, S]) GetOrLoad(ctx context.Context, key string, ttl time.Duration, loader CacheLoadFunc[V]) (V, error) {
+	negativeToken := c.negativeCacheToken(key)
 	reason := LoadReasonMiss
 	value, found, err := c.Get(ctx, key)
 	if err != nil {
@@ -204,16 +269,14 @@ func (c *cacheImpl[V, S]) GetOrLoad(ctx context.Context, key string, ttl time.Du
 		}
 	}
 
-	v, leader, err := c.internalLoader.load(ctx, key, reason, loader)
+	if v, err, ok := c.negativeCacheValue(ctx, key, found, value); ok {
+		return v, err
+	}
+
+	load := c.withNegativeCache(key, negativeToken, loader)
+	v, leader, err := c.internalLoader.load(ctx, key, reason, load)
 	if err != nil {
-		if c.canFallback(ctx, found, value) {
-			c.logger.Warn("failed to load, falling back to cached value", slog.String("key", key), slog.String("error", err.Error()))
-
-			return value.Value, nil
-		}
-		var zero V
-
-		return zero, err
+		return c.handleLoadError(ctx, key, found, value, err)
 	}
 	if leader {
 		co := CacheObject[V]{
@@ -228,11 +291,125 @@ func (c *cacheImpl[V, S]) GetOrLoad(ctx context.Context, key string, ttl time.Du
 	return v, nil
 }
 
+func (c *cacheImpl[V, S]) handleLoadError(
+	ctx context.Context,
+	key string,
+	found bool,
+	value CacheObject[V],
+	err error,
+) (V, error) {
+	if c.canFallback(ctx, found, value) {
+		c.logger.Warn("failed to load, falling back to cached value", slog.String("key", key), slog.String("error", err.Error()))
+
+		return value.Value, nil
+	}
+	var zero V
+
+	return zero, err
+}
+
 func (c *cacheImpl[V, S]) canFallback(ctx context.Context, found bool, value CacheObject[V]) bool {
 	return ctx.Err() == nil &&
 		c.revalidationFallback &&
 		found &&
 		value.ExpireAtMillis > c.now().UnixMilli()
+}
+
+func (c *cacheImpl[V, S]) negativeCacheGet(ctx context.Context, key string) (error, bool) {
+	if c.negativeCache == nil {
+		return nil, false
+	}
+
+	err, found, getErr := c.negativeCache.get(ctx, key)
+	if getErr != nil {
+		c.logger.Warn("failed to get from negative cache", slog.String("key", key), slog.String("error", getErr.Error()))
+
+		return nil, false
+	}
+
+	return err, found
+}
+
+func (c *cacheImpl[V, S]) negativeCacheValue(
+	ctx context.Context,
+	key string,
+	found bool,
+	value CacheObject[V],
+) (V, error, bool) {
+	cachedErr, ok := c.negativeCacheGet(ctx, key)
+	if !ok {
+		var zero V
+
+		return zero, nil, false
+	}
+
+	c.recordNegativeCacheHit(ctx)
+	if c.canFallback(ctx, found, value) {
+		return value.Value, nil, true
+	}
+	var zero V
+
+	return zero, cachedErr, true
+}
+
+func (c *cacheImpl[V, S]) negativeCacheToken(key string) negativeCacheToken {
+	if c.negativeCache == nil {
+		return negativeCacheToken{}
+	}
+
+	return c.negativeCache.token(key)
+}
+
+func (c *cacheImpl[V, S]) withNegativeCache(
+	key string,
+	token negativeCacheToken,
+	loader CacheLoadFunc[V],
+) CacheLoadFunc[V] {
+	if c.negativeCache == nil {
+		return loader
+	}
+
+	return func(ctx context.Context) (V, error) {
+		v, err := loader(ctx)
+		if err != nil {
+			c.negativeCacheSet(ctx, key, err, token)
+		}
+
+		return v, err
+	}
+}
+
+func (c *cacheImpl[V, S]) negativeCacheSet(
+	ctx context.Context,
+	key string,
+	err error,
+	token negativeCacheToken,
+) {
+	if c.negativeCache == nil || ctx.Err() != nil || !c.negativeCacheErrorPredicate(err) {
+		return
+	}
+
+	stored, setErr := c.negativeCache.set(ctx, key, err, c.negativeCacheTTL, token)
+	if setErr != nil {
+		c.logger.Warn("failed to set negative cache", slog.String("key", key), slog.String("error", setErr.Error()))
+
+		return
+	}
+	if stored {
+		c.recordNegativeCacheSet(ctx)
+	}
+}
+
+func (c *cacheImpl[V, S]) recordNegativeCacheHit(ctx context.Context) {
+	if metrics, ok := c.metrics.(NegativeCacheMetricsProvider); ok {
+		metrics.RecordNegativeCacheHit(ctx)
+	}
+}
+
+func (c *cacheImpl[V, S]) recordNegativeCacheSet(ctx context.Context) {
+	if metrics, ok := c.metrics.(NegativeCacheMetricsProvider); ok {
+		metrics.RecordNegativeCacheSet(ctx)
+	}
 }
 
 // shouldRevalidate returns true for expired entries or when a random draw is
