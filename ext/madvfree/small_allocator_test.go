@@ -444,10 +444,6 @@ func TestMultiPageSlabAllocationRepairsPartialReclaim(t *testing.T) {
 	}
 }
 
-// TestSmallSlabRetireRepairsPartialReclaim covers retiring a slot while a
-// reclaim is pending: the slab is repaired rather than discarded, so slots whose
-// payload survived stay live. A zero-length value owns no payload page at all,
-// which makes every reclaimed page unrelated to it.
 func TestSmallSlabRetireRepairsPartialReclaim(t *testing.T) {
 	provider := newTestProvider(t, 8)
 	ctx := context.Background()
@@ -474,7 +470,6 @@ func TestSmallSlabRetireRepairsPartialReclaim(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Delete retires the slot the same way the expiration worker does.
 	if err := provider.Delete(ctx, "retired"); err != nil {
 		t.Fatal(err)
 	}
@@ -509,8 +504,6 @@ func TestMultiPageSlabRetireRepairsPartialReclaim(t *testing.T) {
 		items[slot] = provider.lookup(keys[slot])
 	}
 
-	// Retire a slot whose payload survives the reclaim of the first page, so the
-	// repair has to keep the retired slot's own metadata consistent as well.
 	const reclaimedMask = uint32(1)
 	retiredSlot := -1
 	for slot, item := range items {

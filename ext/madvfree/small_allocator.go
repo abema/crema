@@ -480,10 +480,7 @@ func (p *Provider) finalizeSmallLocked(item *cacheEntry, meta *smallPageMeta) {
 		}
 		invalidPages := layout.allPageMask() &^ validPages
 		if invalidPages != 0 {
-			// Repair instead of discarding the slab, matching the acquisition and
-			// allocation paths: retiring one slot must not evict slots whose payload
-			// survived and only shared a reclaimed metadata page. The repair may
-			// invalidate item itself, in which case its slot is already released.
+			// Keep slots whose payload pages survived.
 			stale = p.repairSmallSlabPagesLocked(meta, item.startPage, layout, invalidPages)
 			slotMatches = meta.entries[slot] == item
 		}

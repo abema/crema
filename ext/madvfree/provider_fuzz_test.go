@@ -89,10 +89,6 @@ func FuzzProviderStateMachine(f *testing.F) {
 				}
 			case 5:
 				item := provider.lookup(key)
-				// Entries carrying a TTL are skipped. The expiration worker removes them
-				// from the index only after popping their record, so op 6 can hand back
-				// an entry that is already logically gone; its Get would then miss
-				// because of the TTL rather than because of the forced reclaim.
 				if item != nil && item.expiresAt == 0 {
 					pageOffset := uint32(operations[offset+2]) % item.pageCount
 					forced, affectsTarget, err := forceReclaimForFuzz(provider, item, pageOffset)
