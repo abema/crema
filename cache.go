@@ -115,7 +115,8 @@ func WithRevalidationWindow(duration time.Duration) CacheOption {
 	}
 }
 
-// WithMaxLoadTimeout sets the maximum duration allowed for loader execution.
+// WithMaxLoadTimeout sets the maximum duration allowed for singleflight loader
+// execution, including its synchronous cache writeback.
 // A non-positive duration disables the timeout.
 func WithMaxLoadTimeout(duration time.Duration) CacheOption {
 	return func(c *cacheConfig) {
@@ -518,9 +519,23 @@ func (c *cacheImpl[V, S]) storeLoadedValue(ctx context.Context, key string, ttl 
 		Value:          value,
 		ExpireAtMillis: c.now().Add(ttl).UnixMilli(),
 	}
-	if err := c.Set(context.WithoutCancel(ctx), key, co); err != nil {
+	storeCtx, cancel := withoutCancelPreservingDeadline(ctx)
+	defer cancel()
+	if err := c.Set(storeCtx, key, co); err != nil {
 		c.logger.Warn("failed to set cache", slog.String("key", key), slog.String("error", err.Error()))
 	}
+}
+
+// withoutCancelPreservingDeadline detaches a writeback from caller
+// cancellation while retaining the load's absolute deadline.
+func withoutCancelPreservingDeadline(ctx context.Context) (context.Context, context.CancelFunc) {
+	detached := context.WithoutCancel(ctx)
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		return detached, func() {}
+	}
+
+	return context.WithDeadline(detached, deadline)
 }
 
 func (c *cacheImpl[V, S]) cacheNegativeResult(
