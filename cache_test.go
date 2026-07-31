@@ -112,13 +112,20 @@ func TestCache_GetOrLoadWritebackHonorsMaxLoadTimeout(t *testing.T) {
 		NoopCacheStorageCodec[int]{},
 		WithMaxLoadTimeout(timeout),
 	)
-	startedAt := time.Now()
+	loaderDeadlines := make(chan time.Time, 1)
 	resultCh := make(chan struct {
 		value int
 		err   error
 	}, 1)
 	go func() {
-		value, err := cache.GetOrLoad(context.Background(), "key", time.Minute, func(context.Context) (int, error) {
+		value, err := cache.GetOrLoad(context.Background(), "key", time.Minute, func(ctx context.Context) (int, error) {
+			deadline, ok := ctx.Deadline()
+			if !ok {
+				t.Error("loader context did not have a deadline")
+			} else {
+				loaderDeadlines <- deadline
+			}
+
 			return 42, nil
 		})
 		resultCh <- struct {
@@ -146,12 +153,17 @@ func TestCache_GetOrLoadWritebackHonorsMaxLoadTimeout(t *testing.T) {
 	}
 
 	select {
-	case deadline := <-provider.deadlines:
-		if deadline.After(startedAt.Add(timeout + 20*time.Millisecond)) {
-			t.Fatalf("writeback deadline was reset: start=%v deadline=%v", startedAt, deadline)
+	case loaderDeadline := <-loaderDeadlines:
+		select {
+		case storeDeadline := <-provider.deadlines:
+			if !storeDeadline.Equal(loaderDeadline) {
+				t.Fatalf("writeback deadline changed: loader=%v store=%v", loaderDeadline, storeDeadline)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("writeback context did not have a deadline")
 		}
 	case <-time.After(time.Second):
-		t.Fatal("writeback context did not have a deadline")
+		t.Fatal("loader context did not have a deadline")
 	}
 }
 
