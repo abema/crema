@@ -1,6 +1,8 @@
 package protobuf
 
 import (
+	"errors"
+	"strconv"
 	"testing"
 
 	"github.com/abema/crema"
@@ -147,6 +149,7 @@ func TestProtobufCodec_DecodeRejectsInvalidSerializedValue(t *testing.T) {
 	}
 
 	envelope := &testproto.ProtoCacheObject{}
+	envelope.SetVersion(protoCacheEnvelopeVersion)
 	envelope.SetSerializedValue([]byte{0xff})
 	encoded, err := proto.Marshal(envelope)
 	if err != nil {
@@ -155,6 +158,31 @@ func TestProtobufCodec_DecodeRejectsInvalidSerializedValue(t *testing.T) {
 
 	if _, err := codec.Decode(encoded); err == nil {
 		t.Fatal("Decode() error = nil, want error")
+	}
+}
+
+func TestProtobufCodec_DecodeRejectsUnsupportedEnvelopeVersion(t *testing.T) {
+	t.Parallel()
+
+	codec, err := NewProtobufCodec(&testproto.ProtoTestObject{})
+	if err != nil {
+		t.Fatalf("NewProtobufCodec() error = %v", err)
+	}
+
+	for _, version := range []int32{0, protoCacheEnvelopeVersion + 1} {
+		t.Run("version="+strconv.FormatInt(int64(version), 10), func(t *testing.T) {
+			envelope := &testproto.ProtoCacheObject{}
+			envelope.SetVersion(version)
+			envelope.SetSerializedValue([]byte{})
+			encoded, err := proto.Marshal(envelope)
+			if err != nil {
+				t.Fatalf("proto.Marshal() error = %v", err)
+			}
+
+			if _, err := codec.Decode(encoded); !errors.Is(err, ErrCacheObjectEnvelopeVersionMismatch) {
+				t.Fatalf("Decode() error = %v, want %v", err, ErrCacheObjectEnvelopeVersionMismatch)
+			}
+		})
 	}
 }
 

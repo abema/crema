@@ -67,6 +67,9 @@ func (p ProtobufCodec[V]) Decode(data []byte) (crema.CacheObject[V], error) {
 	if err := unmarshalOptions.Unmarshal(data, &envelope); err != nil {
 		return crema.CacheObject[V]{}, err
 	}
+	if envelope.GetVersion() != protoCacheEnvelopeVersion {
+		return crema.CacheObject[V]{}, ErrCacheObjectEnvelopeVersionMismatch
+	}
 
 	msg := p.Prototype.ProtoReflect().New().Interface().(V)
 	if err := unmarshalOptions.Unmarshal(envelope.GetSerializedValue(), msg); err != nil {
