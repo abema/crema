@@ -109,12 +109,13 @@ type Provider struct {
 	allocatorMu sync.Mutex
 	allocator   extentAllocator
 
-	smallMu     sync.RWMutex
-	smallPages  map[uint32]*smallPageMeta
-	classPages  [][]smallPageRef
-	classCreate []sync.Mutex
-	smallRefs   sync.Pool
-	layouts     []smallPageLayout
+	smallMu       sync.RWMutex
+	smallPages    map[uint32]*smallPageMeta
+	classPages    [][]smallPageRef
+	classCreate   []sync.Mutex
+	smallScanBase []uint64
+	smallRefs     sync.Pool
+	layouts       []smallPageLayout
 
 	expiryMu    sync.Mutex
 	expirations expiryHeap
@@ -178,16 +179,17 @@ func NewProvider(config Config) (*Provider, error) {
 	pageCount := uint32(capacity / pageSize)
 
 	provider := &Provider{
-		backend:     backend,
-		arena:       arena,
-		pageSize:    pageSize,
-		capacity:    capacity,
-		shards:      shards,
-		hashSeed:    maphash.MakeSeed(),
-		allocator:   newExtentAllocator(pageCount),
-		smallPages:  make(map[uint32]*smallPageMeta),
-		classPages:  make([][]smallPageRef, len(layouts)),
-		classCreate: make([]sync.Mutex, len(layouts)),
+		backend:       backend,
+		arena:         arena,
+		pageSize:      pageSize,
+		capacity:      capacity,
+		shards:        shards,
+		hashSeed:      maphash.MakeSeed(),
+		allocator:     newExtentAllocator(pageCount),
+		smallPages:    make(map[uint32]*smallPageMeta),
+		classPages:    make([][]smallPageRef, len(layouts)),
+		classCreate:   make([]sync.Mutex, len(layouts)),
+		smallScanBase: make([]uint64, len(layouts)),
 		smallRefs: sync.Pool{
 			New: func() any {
 				return new(smallPageRefBuffer)

@@ -67,7 +67,8 @@ func (p *Provider) allocateSmall(
 	}
 	layout := p.layouts[classID]
 
-	if item, allocated, err := p.allocateFromSmallPages(classID, layout, key, value, expiresAt, false); allocated || err != nil {
+	item, allocated, err := p.allocateSmallFastPath(classID, layout, key, value, expiresAt)
+	if allocated || err != nil {
 		return item, true, err
 	}
 
@@ -75,11 +76,54 @@ func (p *Provider) allocateSmall(
 	creation.Lock()
 	defer creation.Unlock()
 
+	if item, allocated, err := p.probeSmallClassIfNeeded(classID, layout, key, value, expiresAt); allocated || err != nil {
+		return item, true, err
+	}
+
 	// Another Set may have created a slab while this goroutine waited.
 	if item, allocated, err := p.allocateFromSmallPages(classID, layout, key, value, expiresAt, false); allocated || err != nil {
 		return item, true, err
 	}
 
+	return p.allocateNewSmallPageLocked(classID, layout, key, value, expiresAt)
+}
+
+func (p *Provider) allocateSmallFastPath(
+	classID uint16,
+	layout smallPageLayout,
+	key string,
+	value []byte,
+	expiresAt int64,
+) (*cacheEntry, bool, error) {
+	if p.shouldProbeSmallClass(classID) {
+		return p.allocateFromFullSmallPages(classID, layout, key, value, expiresAt)
+	}
+
+	return p.allocateFromSmallPages(classID, layout, key, value, expiresAt, false)
+}
+
+func (p *Provider) probeSmallClassIfNeeded(
+	classID uint16,
+	layout smallPageLayout,
+	key string,
+	value []byte,
+	expiresAt int64,
+) (*cacheEntry, bool, error) {
+	if !p.shouldProbeSmallClass(classID) {
+		return nil, false, nil
+	}
+	item, allocated, err := p.allocateFromFullSmallPages(classID, layout, key, value, expiresAt)
+
+	return item, allocated, err
+}
+
+func (p *Provider) allocateNewSmallPageLocked(
+	classID uint16,
+	layout smallPageLayout,
+	key string,
+	value []byte,
+	expiresAt int64,
+) (*cacheEntry, bool, error) {
 	p.allocatorMu.Lock()
 	pageID, ok := p.allocator.allocate(layout.pageCount)
 	if ok {
@@ -124,15 +168,47 @@ func (p *Provider) allocateFromFullSmallPages(
 	value []byte,
 	expiresAt int64,
 ) (*cacheEntry, bool, error) {
-	// Full slabs are normally skipped to avoid reclaim validation on every Set.
-	// Probe them only when a new slab cannot be allocated, so reclaimed slots can
-	// still recover logical capacity under pressure.
 	item, allocated, err := p.allocateFromSmallPages(classID, layout, key, value, expiresAt, true)
-	if allocated || err != nil {
+	if err != nil {
 		return item, true, err
+	}
+	p.recordSmallScan(classID)
+	if allocated {
+		return item, true, nil
 	}
 
 	return nil, false, nil
+}
+
+func (p *Provider) shouldProbeSmallClass(classID uint16) bool {
+	p.smallMu.RLock()
+	slabCount := uint64(len(p.classPages[classID]))
+	baseline := p.smallScanBase[classID]
+	p.smallMu.RUnlock()
+
+	if slabCount == 0 {
+		return false
+	}
+	if baseline == 0 {
+		baseline = 1
+	} else if slabCount < baseline {
+		baseline = slabCount
+	}
+	if baseline > ^uint64(0)/2 {
+		return slabCount >= baseline
+	}
+
+	return slabCount >= baseline*2
+}
+
+func (p *Provider) recordSmallScan(classID uint16) {
+	p.smallMu.Lock()
+	slabCount := uint64(len(p.classPages[classID]))
+	if slabCount == 0 {
+		slabCount = 1
+	}
+	p.smallScanBase[classID] = slabCount
+	p.smallMu.Unlock()
 }
 
 func (p *Provider) allocateFromSmallPages(
