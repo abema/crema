@@ -8,6 +8,7 @@
 // fails, instead of propagating the loader error. Use
 // WithRevalidationFallback(false) to always propagate loader errors.
 //
-// Load failures are not cached by default. WithLoadErrorCacheProvider enables an
-// error cache with an independent TTL.
+// Load failures are not cached by default. WithNegativeCacheProvider caches
+// errors that mean a value is absent, while WithLoadErrorCacheProvider can cache
+// any explicitly selected loader error. Both use an independent error-cache TTL.
 package crema
