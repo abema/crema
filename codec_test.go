@@ -278,6 +278,41 @@ func TestBinaryCompressionCodec_RoundTripCompressed(t *testing.T) {
 	}
 }
 
+func TestBinaryCompressionCodec_DecompressionLimit(t *testing.T) {
+	t.Parallel()
+
+	input := CacheObject[string]{
+		Value:          strings.Repeat("a", 1024),
+		ExpireAtMillis: 1234,
+	}
+	encoded, err := NewBinaryCompressionCodec(binaryCompressionTestCodec{}, 0).Encode(input)
+	if err != nil {
+		t.Fatalf("Encode() error = %v", err)
+	}
+
+	limited := NewBinaryCompressionCodec(
+		binaryCompressionTestCodec{},
+		0,
+		WithMaxDecompressedBytes(128),
+	)
+	if _, err := limited.Decode(encoded); !errors.Is(err, ErrDecompressedSizeLimitExceeded) {
+		t.Fatalf("Decode() error = %v, want %v", err, ErrDecompressedSizeLimitExceeded)
+	}
+
+	unlimited := NewBinaryCompressionCodec(
+		binaryCompressionTestCodec{},
+		0,
+		WithMaxDecompressedBytes(0),
+	)
+	decoded, err := unlimited.Decode(encoded)
+	if err != nil {
+		t.Fatalf("Decode() with disabled limit error = %v", err)
+	}
+	if decoded != input {
+		t.Fatalf("decoded value = %+v, want %+v", decoded, input)
+	}
+}
+
 func TestBinaryCompressionCodec_RoundTripCompressedAtThreshold(t *testing.T) {
 	t.Parallel()
 
