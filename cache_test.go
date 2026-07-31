@@ -72,7 +72,8 @@ func TestCache_SetSkipsExpired(t *testing.T) {
 	t.Parallel()
 
 	provider := &testMemoryProvider[int]{items: make(map[string]CacheObject[int])}
-	cache := NewCache(provider, NoopCacheStorageCodec[int]{})
+	var encodeCalls atomic.Int32
+	cache := NewCache(provider, countingIntCacheStorageCodec{encodeCalls: &encodeCalls})
 	impl := cache.(*cacheImpl[int, CacheObject[int]])
 	impl.now = func() time.Time { return time.UnixMilli(1000) }
 
@@ -86,6 +87,57 @@ func TestCache_SetSkipsExpired(t *testing.T) {
 	if _, ok := provider.items["stale"]; ok {
 		t.Fatalf("expected expired entry not to be stored")
 	}
+	if got := encodeCalls.Load(); got != 0 {
+		t.Fatalf("expected expired entry not to be encoded, got %d calls", got)
+	}
+}
+
+func TestCache_SetUsesTTLFromInitialCheck(t *testing.T) {
+	t.Parallel()
+
+	provider := &testMemoryProvider[int]{items: make(map[string]CacheObject[int])}
+	var encodeCalls atomic.Int32
+	cache := NewCache(provider, countingIntCacheStorageCodec{encodeCalls: &encodeCalls})
+	impl := cache.(*cacheImpl[int, CacheObject[int]])
+	var nowCalls int
+	impl.now = func() time.Time {
+		nowCalls++
+		if nowCalls == 1 {
+			return time.UnixMilli(1000)
+		}
+		return time.UnixMilli(2000)
+	}
+
+	err := cache.Set(context.Background(), "stale", CacheObject[int]{
+		Value:          1,
+		ExpireAtMillis: 1500,
+	})
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if _, ok := provider.items["stale"]; !ok {
+		t.Fatalf("expected entry to be stored with the initial TTL")
+	}
+	if got := encodeCalls.Load(); got != 1 {
+		t.Fatalf("expected one encode call, got %d", got)
+	}
+	if nowCalls != 1 {
+		t.Fatalf("expected one time check, got %d", nowCalls)
+	}
+}
+
+type countingIntCacheStorageCodec struct {
+	encodeCalls *atomic.Int32
+}
+
+func (c countingIntCacheStorageCodec) Encode(value CacheObject[int]) (CacheObject[int], error) {
+	c.encodeCalls.Add(1)
+
+	return value, nil
+}
+
+func (countingIntCacheStorageCodec) Decode(value CacheObject[int]) (CacheObject[int], error) {
+	return value, nil
 }
 
 func TestCache_GetOrLoadUsesCachedValue(t *testing.T) {
