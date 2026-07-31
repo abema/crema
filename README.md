@@ -107,7 +107,7 @@ func main() {
 - `WithRevalidationWindow(duration)`: Set how long before expiry probabilistic
   reloads may start (`0` disables them)
 - `WithDirectLoader()`: Disable singleflight and call loaders directly
-- `WithMaxLoadTimeout(duration)`: Set max duration for singleflight loaders (ignored with `WithDirectLoader()`)
+- `WithMaxLoadTimeout(duration)`: Set max duration for singleflight loaders and their synchronous cache writebacks (ignored with `WithDirectLoader()`)
 - `WithRevalidationFallback(enabled)`: Enable or disable revalidation fallback (enabled by default)
 - `WithLogger(logger)`: Override warning logger for get/set failures
 - `WithMetricsProvider(metrics)`: Record cache and loader events

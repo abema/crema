@@ -68,6 +68,93 @@ func (m *countingMetricsProvider) RecordLoadError(context.Context) {
 	atomic.AddInt32(&m.loadErrors, 1)
 }
 
+type blockingSetProvider struct {
+	started   chan struct{}
+	release   chan struct{}
+	startOnce sync.Once
+	deadlines chan time.Time
+}
+
+func (p *blockingSetProvider) Get(context.Context, string) (CacheObject[int], bool, error) {
+	return CacheObject[int]{}, false, nil
+}
+
+func (p *blockingSetProvider) Set(ctx context.Context, _ string, _ CacheObject[int], _ time.Duration) error {
+	p.startOnce.Do(func() { close(p.started) })
+	if deadline, ok := ctx.Deadline(); ok {
+		p.deadlines <- deadline
+	}
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-p.release:
+		return nil
+	}
+}
+
+func (p *blockingSetProvider) Delete(context.Context, string) error {
+	return nil
+}
+
+func TestCache_GetOrLoadWritebackHonorsMaxLoadTimeout(t *testing.T) {
+	t.Parallel()
+
+	const timeout = 50 * time.Millisecond
+	provider := &blockingSetProvider{
+		started:   make(chan struct{}),
+		release:   make(chan struct{}),
+		deadlines: make(chan time.Time, 1),
+	}
+	defer close(provider.release)
+
+	cache := NewCache(
+		provider,
+		NoopCacheStorageCodec[int]{},
+		WithMaxLoadTimeout(timeout),
+	)
+	startedAt := time.Now()
+	resultCh := make(chan struct {
+		value int
+		err   error
+	}, 1)
+	go func() {
+		value, err := cache.GetOrLoad(context.Background(), "key", time.Minute, func(context.Context) (int, error) {
+			return 42, nil
+		})
+		resultCh <- struct {
+			value int
+			err   error
+		}{value: value, err: err}
+	}()
+
+	select {
+	case <-provider.started:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for cache writeback")
+	}
+
+	select {
+	case result := <-resultCh:
+		if result.err != nil {
+			t.Fatalf("GetOrLoad() error = %v, want nil", result.err)
+		}
+		if result.value != 42 {
+			t.Fatalf("GetOrLoad() value = %d, want 42", result.value)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("GetOrLoad did not return after writeback deadline")
+	}
+
+	select {
+	case deadline := <-provider.deadlines:
+		if deadline.After(startedAt.Add(timeout + 20*time.Millisecond)) {
+			t.Fatalf("writeback deadline was reset: start=%v deadline=%v", startedAt, deadline)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("writeback context did not have a deadline")
+	}
+}
+
 func TestCache_SetSkipsExpired(t *testing.T) {
 	t.Parallel()
 
