@@ -1,5 +1,5 @@
-github.com/abema/crema v1.1.1 h1:mGvlyqHiVDtQjS614JVUNYVxNiVcyZvYbj839cDtZEQ=
-github.com/abema/crema v1.1.1/go.mod h1:2kfFKrRClqtGA8AEGExyGGcyo8W602YhYUhAwrSY1RU=
+github.com/abema/crema v1.2.0 h1:qt7iubOQh4bfLoH7kFufa6br+tVfi5GtN6Q2NeHQwdY=
+github.com/abema/crema v1.2.0/go.mod h1:2kfFKrRClqtGA8AEGExyGGcyo8W602YhYUhAwrSY1RU=
 github.com/abema/crema/ext/protobuf v1.1.1 h1:/jBKCkpfgXyD6wF7BmromH2IrE6SHLIJebYCeIyi9Yo=
 github.com/abema/crema/ext/protobuf v1.1.1/go.mod h1:8mDOI9JLM+rnINvTJuuiMcV5Pmx/Z/dzO1cE8u2UND0=
 github.com/abema/crema/ext/ristretto v1.1.1 h1:yfgxgDSgc3UXRw9+ze9bb60k+ZHFHBEQq0THei5lOFs=
@@ -11,11 +11,13 @@ github.com/abema/crema/ext/valkey-go v1.1.1/go.mod h1:0yjsXPLOAmWFUip7nUC9Us2zv6
 github.com/alicebob/miniredis/v2 v2.38.0 h1:nZAzCR+Lj+Vxk4ZXzm2NuKq2O33RXj1XxJ2e2uP9jiw=
 github.com/alicebob/miniredis/v2 v2.38.0/go.mod h1:TcL7YfarKPGDAthEtl5NBeHZfeUQj6OXMm/+iu5cLMM=
 github.com/cespare/xxhash/v2 v2.3.0 h1:UL815xU9SqsFlibzuggzjXhog7bL6oX9BbNZnL2UFvs=
+github.com/cespare/xxhash/v2 v2.3.0/go.mod h1:VGX0DQ3Q6kWi7AoAeZDth3/j3BFtOZR5XLFGgcrjCOs=
 github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/dgraph-io/ristretto v0.2.0 h1:XAfl+7cmoUDWW/2Lx8TGZQjjxIQ2Ley9DSf52dru4WE=
 github.com/dgraph-io/ristretto v0.2.0/go.mod h1:8uBHCU/PBV4Ag0CJrP47b9Ofby5dqWNh4FicAdoqFNU=
 github.com/dgraph-io/ristretto/v2 v2.4.2 h1:x0cvjmUKxt764Yxdk2nr94we1AvPPAMh1rh5TQ+Jo80=
+github.com/dgraph-io/ristretto/v2 v2.4.2/go.mod h1:0KsrXtXvnv0EqnzyowllbVJB8yBonswa2lTCK2gGo9E=
 github.com/dgryski/go-farm v0.0.0-20240924180020-3414d57e47da h1:aIftn67I1fkbMa512G+w+Pxci9hJPB8oMnkcP3iZF38=
 github.com/dustin/go-humanize v1.0.1 h1:GzkhY7T5VNhEkwH0PVJgjz+fX1rhBrR7pRT3mDkpeCY=
 github.com/dustin/go-humanize v1.0.1/go.mod h1:Mu1zIs6XwVuF/gI1OepvI0qD18qycQx+mFykh5fBlto=

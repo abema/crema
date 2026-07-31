@@ -3,7 +3,7 @@ module github.com/abema/crema/ext/madvfree/bench
 go 1.25.0
 
 require (
-	github.com/abema/crema v1.1.1
+	github.com/abema/crema v1.2.0
 	github.com/abema/crema/ext/madvfree v0.0.0
 	github.com/abema/crema/ext/ristretto v1.1.1
 )
