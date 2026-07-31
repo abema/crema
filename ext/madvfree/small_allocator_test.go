@@ -212,16 +212,44 @@ func TestSmallAllocatorReclaimInvalidatesWholePage(t *testing.T) {
 	}
 }
 
-func TestSmallAllocatorSlotOwnershipMismatchPanics(t *testing.T) {
+func TestSmallAllocatorRepairedSlotReturnsMiss(t *testing.T) {
 	provider := newTestProvider(t, 4)
 	if err := provider.Set(context.Background(), "key", []byte("value"), 0); err != nil {
 		t.Fatal(err)
 	}
 	item := provider.lookup("key")
 	meta := item.smallMeta
+	layout := provider.layouts[item.classID]
+	meta.mu.Lock()
+	stale := provider.repairSmallSlabPagesLocked(meta, item.startPage, layout, layout.allPageMask())
+	meta.mu.Unlock()
+	defer provider.cleanupStaleSmall(stale)
+
+	if _, found, err := provider.Get(context.Background(), "key"); err != nil || found {
+		t.Fatalf("Get() = (_, %v, %v), want miss", found, err)
+	}
+	if provider.lookup("key") != nil {
+		t.Fatal("repaired entry remained indexed")
+	}
+}
+
+func TestSmallAllocatorSlotOwnershipMismatchPanics(t *testing.T) {
+	provider := newTestProvider(t, 4)
+	if err := provider.Set(context.Background(), "key", []byte("value"), 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := provider.Set(context.Background(), "other", []byte("value"), 0); err != nil {
+		t.Fatal(err)
+	}
+	item := provider.lookup("key")
+	other := provider.lookup("other")
+	meta := item.smallMeta
+	if other.smallMeta != meta {
+		t.Fatal("entries were allocated in different slabs")
+	}
 	slot := int(item.slot)
 	meta.mu.Lock()
-	meta.entries[slot] = nil
+	meta.entries[slot] = other
 	meta.mu.Unlock()
 
 	assertAcquireSmallPanics(

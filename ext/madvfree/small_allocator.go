@@ -415,7 +415,24 @@ func (p *Provider) acquireSmall(item *cacheEntry) (bool, bool, error) {
 	}
 
 	slot := int(item.slot)
-	if slot >= len(meta.entries) || meta.entries[slot] != item {
+	if slot >= len(meta.entries) {
+		panic("madvfree: small entry slot ownership mismatch")
+	}
+	if meta.entries[slot] == nil {
+		// A concurrent reclaim repair removed this slot while this entry was
+		// waiting for meta.mu. cleanupStaleSmall will finish retirement; this
+		// caller must observe the entry as a cache miss.
+		item.state = entryDead
+		if meta.refs == 0 {
+			p.markIdleSmallSlabLocked(item.startPage, layout)
+		}
+		meta.mu.Unlock()
+		item.mu.Unlock()
+		p.cleanupStaleSmall(stale)
+
+		return reclaimed, false, nil
+	}
+	if meta.entries[slot] != item {
 		panic("madvfree: small entry slot ownership mismatch")
 	}
 	allocated, valid := layout.slotAllocated(slab, slot)
