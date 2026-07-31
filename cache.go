@@ -73,13 +73,13 @@ type cacheConfig struct {
 	useDirectLoader                bool
 }
 
-// CacheOption configures a Cache instance.
-type CacheOption func(*cacheConfig)
+// CacheOption[V] configures a Cache for values of type V.
+type CacheOption[V any] func(*cacheConfig)
 
 const defaultRevalidationWindowMilliseconds = 300000
 
 // WithLogger overrides the default logger used for cache warnings.
-func WithLogger(logger *slog.Logger) CacheOption {
+func WithLogger(logger *slog.Logger) func(*cacheConfig) {
 	return func(c *cacheConfig) {
 		if logger != nil {
 			c.logger = logger
@@ -88,7 +88,7 @@ func WithLogger(logger *slog.Logger) CacheOption {
 }
 
 // WithMetricsProvider overrides the default metrics provider.
-func WithMetricsProvider(metrics MetricsProvider) CacheOption {
+func WithMetricsProvider(metrics MetricsProvider) func(*cacheConfig) {
 	return func(c *cacheConfig) {
 		if metrics == nil {
 			metrics = NoopMetricsProvider{}
@@ -98,7 +98,7 @@ func WithMetricsProvider(metrics MetricsProvider) CacheOption {
 }
 
 // WithDirectLoader disables singleflight and calls loaders directly.
-func WithDirectLoader() CacheOption {
+func WithDirectLoader() func(*cacheConfig) {
 	return func(c *cacheConfig) {
 		c.useDirectLoader = true
 	}
@@ -106,7 +106,7 @@ func WithDirectLoader() CacheOption {
 
 // WithRevalidationWindow sets how long before expiry probabilistic revalidation starts.
 // A zero duration disables probabilistic revalidation.
-func WithRevalidationWindow(duration time.Duration) CacheOption {
+func WithRevalidationWindow(duration time.Duration) func(*cacheConfig) {
 	steepness, revalidationWindowMilliseconds := calculateSteepnessAndRevalidationWindow(duration.Milliseconds())
 
 	return func(c *cacheConfig) {
@@ -118,7 +118,7 @@ func WithRevalidationWindow(duration time.Duration) CacheOption {
 // WithMaxLoadTimeout sets the maximum duration allowed for singleflight loader
 // execution, including its synchronous cache writeback.
 // A non-positive duration disables the timeout.
-func WithMaxLoadTimeout(duration time.Duration) CacheOption {
+func WithMaxLoadTimeout(duration time.Duration) func(*cacheConfig) {
 	return func(c *cacheConfig) {
 		c.maxLoadTimeout = duration
 	}
@@ -126,7 +126,7 @@ func WithMaxLoadTimeout(duration time.Duration) CacheOption {
 
 // WithRevalidationFallback controls whether GetOrLoad returns a still-valid
 // cached value when revalidation fails. It is enabled by default.
-func WithRevalidationFallback(enabled bool) CacheOption {
+func WithRevalidationFallback(enabled bool) func(*cacheConfig) {
 	return func(c *cacheConfig) {
 		c.revalidationFallback = enabled
 	}
@@ -137,7 +137,7 @@ func WithLoadErrorCacheProvider(
 	provider CacheProvider[error],
 	ttl time.Duration,
 	shouldCache LoadErrorCacheErrorPredicate,
-) CacheOption {
+) func(*cacheConfig) {
 	return func(c *cacheConfig) {
 		if provider == nil || shouldCache == nil || ttl <= 0 {
 			c.loadErrorCacheProvider = nil
@@ -152,11 +152,12 @@ func WithLoadErrorCacheProvider(
 }
 
 // WithNegativeCacheProvider caches loader results selected by isNegative as absent values.
+// The provider value type V must match the value type used by NewCache.
 func WithNegativeCacheProvider[V any](
 	provider CacheProvider[CacheLoadResult[V]],
 	ttl time.Duration,
 	isNegative NegativeCachePredicate[V],
-) CacheOption {
+) CacheOption[V] {
 	return func(c *cacheConfig) {
 		if provider == nil || isNegative == nil || ttl <= 0 {
 			c.negativeCacheProvider = nil
@@ -171,7 +172,7 @@ func WithNegativeCacheProvider[V any](
 }
 
 // NewCache constructs a Cache with defaults and optional overrides.
-func NewCache[V any, S any](provider CacheProvider[S], codec CacheStorageCodec[V, S], opts ...CacheOption) Cache[V] {
+func NewCache[V any, S any](provider CacheProvider[S], codec CacheStorageCodec[V, S], opts ...CacheOption[V]) Cache[V] {
 	steepness, revalidationWindowMilliseconds := calculateSteepnessAndRevalidationWindow(defaultRevalidationWindowMilliseconds)
 	config := cacheConfig{
 		logger:                         slog.New(noopLogHandler{}),
