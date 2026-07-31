@@ -11,7 +11,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-	"time"
 
 	"github.com/abema/crema"
 )

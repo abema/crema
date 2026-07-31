@@ -42,20 +42,10 @@ type Config struct {
 	// ShardCount is the number of independently locked key-index shards.
 	// Zero selects 64.
 	ShardCount int
-	// IdleDelay is how long an allocation whose last reader has released it stays
-	// pinned before the provider marks it reclaimable. The advice is issued only
-	// after IdleDelay has elapsed without any access, so a key read in a loop pays
-	// one idle-plus-reactivate pair per delay period instead of one per call.
-	//
-	// Zero selects DefaultIdleDelay. A negative value returns ErrInvalidConfig.
-	// Longer delays remove more advice calls but keep unreferenced allocations
-	// unreclaimable for up to twice IdleDelay after their last access, and an
-	// allocation accessed more often than once per IdleDelay is never offered to
-	// the kernel while that traffic continues.
+	// IdleDelay delays marking an unreferenced allocation reclaimable.
+	// Zero selects DefaultIdleDelay; a negative value returns ErrInvalidConfig.
 	IdleDelay time.Duration
-	// DisableIdleDelay marks an allocation reclaimable as soon as its last reader
-	// releases it, ignoring IdleDelay. It minimizes the time an unreferenced
-	// allocation is unreclaimable at the cost of one idle advice per access.
+	// DisableIdleDelay marks allocations reclaimable immediately on release.
 	DisableIdleDelay bool
 	// EnableHugePages skips the default MADV_NOHUGEPAGE advice on Linux.
 	// It has no effect on macOS.
@@ -111,14 +101,9 @@ type Stats struct {
 	ReactivateErrors uint64
 	DiscardErrors    uint64
 
-	// IdleDeferrals counts allocations queued for deferred idle marking instead
-	// of being marked reclaimable as soon as their last reader released them. It
-	// stays zero when Config.DisableIdleDelay is set.
+	// IdleDeferrals counts allocations queued for deferred idle marking.
 	IdleDeferrals uint64
-	// IdleCancellations counts queued deferrals resolved without any idle advice
-	// because the allocation was in use again, already reclaimable, or discarded
-	// before its delay elapsed. A deferral rescheduled by further access counts
-	// in neither counter.
+	// IdleCancellations counts queued deferrals resolved without idle advice.
 	IdleCancellations uint64
 
 	// Allocations counts successful slab-slot and extent allocations.

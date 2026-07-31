@@ -29,33 +29,6 @@
 // cause NewProvider to fail with an mmap error. Set CapacityBytes explicitly
 // below the applicable virtual-address-space limit in such environments.
 //
-// # Idle hysteresis
-//
-// An allocation is not marked reclaimable the moment its last reader releases
-// it. Every release records an access on the extent or slab, and a background
-// sweeper issues the idle advice only once Config.IdleDelay has elapsed without
-// one. Repeated access to the same key therefore issues no advice at all instead
-// of one idle plus one reactivate call per access. The idle advice is a madvise
-// call on both platforms and the reactivation is a second one on macOS, so the
-// deferral removes most of the per-Get system-call cost for hot keys.
-// Config.IdleDelay tunes the delay, and Config.DisableIdleDelay restores marking
-// on every release.
-//
-// The trade-off is physical memory retention. An unreferenced allocation stays
-// unreclaimable for one delay period after its last access, and for up to two
-// because the sweeper reschedules a deferral whose region was touched inside the
-// window; an allocation accessed more often than once per delay period is never
-// offered to the kernel while that traffic continues. Reclaimability is
-// otherwise unchanged: the default delay bounds the extra retention to a few
-// milliseconds of idleness, which is short relative to the timescale on which
-// the kernel reclaims MADV_FREE pages, and Delete, TTL expiration, Purge, and
-// Trim still discard pages immediately rather than waiting for the delay.
-// Shorten IdleDelay, or set DisableIdleDelay, when the smallest possible
-// unreclaimable window matters more than the system calls; lengthen it for
-// workloads dominated by re-reads of the same keys. Stats.IdleDeferrals and
-// Stats.IdleCancellations report how often the deferral applied and how often it
-// was resolved without any advice.
-//
 // # Capacity and eviction
 //
 // Kernel reclaim of an idle page does not itself release the corresponding

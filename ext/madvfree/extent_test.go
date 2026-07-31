@@ -203,7 +203,12 @@ func TestExtentTTLExpiryWaitsForReader(t *testing.T) {
 }
 
 func TestExtentIdleDeferredUntilLastReader(t *testing.T) {
-	provider := newExtentTestProvider(t, 8)
+	provider := newConfiguredTestProvider(t, Config{
+		CapacityBytes:    unix.Getpagesize() * 8,
+		SizeClasses:      []int{},
+		ShardCount:       4,
+		DisableIdleDelay: true,
+	})
 	value := bytes.Repeat([]byte{0x7a}, provider.pageSize*2)
 	item := setExtent(t, provider, "key", value, 0)
 

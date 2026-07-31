@@ -13,8 +13,6 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// idleTestCase covers both allocators, whose idle state lives on different
-// objects: cacheEntry for extents and smallPageMeta for slabs.
 type idleTestCase struct {
 	name        string
 	sizeClasses []int
@@ -35,8 +33,6 @@ func idleTestCases() []idleTestCase {
 	}
 }
 
-// forceIdleSweep runs the sweeper from the calling goroutine. Callers configure a
-// delay long enough that the provider's own sweeper cannot run concurrently.
 func forceIdleSweep(t *testing.T, provider *Provider) {
 	t.Helper()
 	provider.idleMu.Lock()
@@ -72,8 +68,6 @@ func TestIdleHysteresisKeepsRepeatedGetsPinned(t *testing.T) {
 				}
 			}
 
-			// One deferral covers the whole burst: Set queues it and every release
-			// only postpones it.
 			stats := provider.Stats()
 			if stats.IdleCalls != 0 ||
 				stats.ReactivateCalls != 1 ||
@@ -103,8 +97,6 @@ func TestIdleHysteresisReschedulesAccessedRegion(t *testing.T) {
 				t.Fatalf("Get() = (_, %v, %v)", ok, err)
 			}
 
-			// The Get moved the region's use sequence, so the queued deferral is
-			// rescheduled instead of issuing the advice.
 			forceIdleSweep(t, provider)
 			if stats := provider.Stats(); stats.IdleCalls != 0 || stats.IdleDeferrals != 1 {
 				t.Fatalf("Stats() after a rescheduled sweep = %+v", stats)
@@ -113,8 +105,6 @@ func TestIdleHysteresisReschedulesAccessedRegion(t *testing.T) {
 				t.Fatalf("queued deferrals after rescheduling = %d, want 1", got)
 			}
 
-			// Nothing touched the region since the reschedule, so the second sweep
-			// hands it to the kernel.
 			forceIdleSweep(t, provider)
 			stats := provider.Stats()
 			if stats.IdleCalls != 1 || stats.IdleCancellations != 0 {
@@ -124,8 +114,6 @@ func TestIdleHysteresisReschedulesAccessedRegion(t *testing.T) {
 				t.Fatalf("queued deferrals after the advice = %d, want 0", got)
 			}
 
-			// The reclaimable region is reactivated on the next read and still
-			// returns its bytes.
 			got, ok, err := provider.Get(context.Background(), "key")
 			if err != nil || !ok || !bytes.Equal(got, test.value) {
 				t.Fatalf("Get() after idle marking = (len=%d, %v, %v)", len(got), ok, err)
@@ -180,8 +168,6 @@ func TestDisableIdleDelayMarksIdleOnRelease(t *testing.T) {
 				t.Fatalf("Get() = (len=%d, %v, %v)", len(got), ok, err)
 			}
 
-			// Set and the Get's release each mark the region reclaimable, and the
-			// Get has to reactivate it in between.
 			stats := provider.Stats()
 			if stats.IdleCalls != 2 ||
 				stats.ReactivateCalls != 2 ||
@@ -219,7 +205,6 @@ func TestIdleQueueCompactsConsumedDeferrals(t *testing.T) {
 		IdleDelay:     time.Minute,
 	})
 
-	// Every key owns a single-page extent, so each Set queues its own deferral.
 	for index := range swept + pending {
 		if err := provider.Set(context.Background(), fmt.Sprint(index), []byte("value"), 0); err != nil {
 			t.Fatalf("Set(): %v", err)
@@ -229,7 +214,6 @@ func TestIdleQueueCompactsConsumedDeferrals(t *testing.T) {
 		t.Fatalf("queued deferrals = %d, want %d", got, swept+pending)
 	}
 
-	// Sweeping only part of the queue leaves a consumed prefix behind.
 	provider.idleMu.Lock()
 	for index := range swept {
 		provider.idleQueue[index].deadline = 0
@@ -243,7 +227,6 @@ func TestIdleQueueCompactsConsumedDeferrals(t *testing.T) {
 		t.Fatalf("queue head = %d, length = %d, want %d and %d", head, length, swept, swept+pending)
 	}
 
-	// The next deferral compacts that prefix away instead of growing the queue.
 	if err := provider.Set(context.Background(), "extra", []byte("value"), 0); err != nil {
 		t.Fatalf("Set(): %v", err)
 	}

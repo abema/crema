@@ -7,34 +7,17 @@ import (
 	"time"
 )
 
-// idleQueueCompactLimit is the number of consumed deferral slots tolerated
-// before the queue is compacted in place.
+// idleQueueCompactLimit bounds consumed queue slots.
 const idleQueueCompactLimit = 64
 
-// idleState is the deferred idle-marking state of one arena region.
-//
-// A region is not marked reclaimable as soon as its last reader releases it.
-// The release path bumps useSeq and queues at most one deferral, and the sweeper
-// issues the idle advice only once Config.IdleDelay has elapsed with useSeq
-// unchanged. Repeated access to the same region therefore costs neither the idle
-// nor the reactivate advice, at the price of the region staying unreclaimable
-// for up to two delay periods after its last access.
-//
-// idleState is guarded by the mutex of the region's owner: cacheEntry.mu for
-// extents and smallPageMeta.mu for small slabs.
+// idleState is guarded by cacheEntry.mu or smallPageMeta.mu.
 type idleState struct {
-	// useSeq counts the times the region's last reader released it.
-	useSeq uint64
-	// reclaimable reports that the idle advice has been issued for the region,
-	// so it must be reactivated before its bytes are read again.
+	useSeq      uint64
 	reclaimable bool
-	// pending reports that the sweeper owns a deferral for the region. Only one
-	// deferral exists per region; later releases only bump useSeq.
-	pending bool
+	pending     bool
 }
 
-// idleCandidate is one queued deferred idle marking. Exactly one of entry and
-// meta is set, and startPage identifies the region's first arena page.
+// idleCandidate identifies one extent or slab.
 type idleCandidate struct {
 	entry     *cacheEntry
 	meta      *smallPageMeta
@@ -43,12 +26,7 @@ type idleCandidate struct {
 	startPage uint32
 }
 
-// deferIdleLocked records that the region described by candidate has no readers
-// left.
-//
-// It reports whether the caller must issue the idle advice itself, which happens
-// only when the hysteresis is disabled. The caller must hold the mutex guarding
-// state.
+// deferIdleLocked returns whether the caller must mark the region idle now.
 func (p *Provider) deferIdleLocked(state *idleState, candidate idleCandidate) bool {
 	if p.idleDelay <= 0 {
 		state.reclaimable = true
@@ -68,34 +46,13 @@ func (p *Provider) deferIdleLocked(state *idleState, candidate idleCandidate) bo
 	return false
 }
 
-// reactivateLocked re-pins a region before it is read.
-//
-// Regions that the hysteresis has kept pinned need no advice, which is where the
-// deferral pays off. The caller must hold the mutex guarding state.
-func (p *Provider) reactivateLocked(state *idleState, region []byte) error {
-	if !state.reclaimable {
-		return nil
-	}
-	if err := p.markActive(region); err != nil {
-		return err
-	}
-	state.reclaimable = false
-
-	return nil
-}
-
-// requeueIdleLocked reschedules a deferral whose region was accessed during the
-// delay window. The caller must hold the mutex guarding state, which keeps
-// state.pending set.
+// requeueIdleLocked reschedules a deferral after access during its delay.
 func (p *Provider) requeueIdleLocked(state *idleState, candidate idleCandidate) {
 	candidate.useSeq = state.useSeq
 	p.queueIdle(candidate)
 }
 
-// queueIdle appends candidate with a fresh deadline.
-//
-// Every deferral uses the same delay, so appending keeps the queue ordered by
-// deadline and the sweeper only has to look at its head.
+// queueIdle appends a candidate with a fresh deadline.
 func (p *Provider) queueIdle(candidate idleCandidate) {
 	p.idleMu.Lock()
 	empty := p.idleHead == len(p.idleQueue)
@@ -189,10 +146,7 @@ func (p *Provider) sweepIdle() {
 	}
 }
 
-// applyDeferredIdle issues, reschedules, or cancels one queued idle marking.
-//
-// It holds the lifecycle read lock so the arena cannot be unmapped underneath
-// the advice.
+// applyDeferredIdle processes one queued idle marking.
 func (p *Provider) applyDeferredIdle(candidate idleCandidate) {
 	p.lifecycle.RLock()
 	defer p.lifecycle.RUnlock()
@@ -216,9 +170,6 @@ func (p *Provider) applyDeferredIdleExtent(candidate idleCandidate) {
 	if !item.idle.pending {
 		return
 	}
-	// The decision only looks at the region's current state, never at the
-	// identity the deferral was queued for. A reader, a replacement, or a discard
-	// resolves the region on its own, and the next release queues a new deferral.
 	if item.freed || item.state != entryLive || item.refs != 0 || item.idle.reclaimable {
 		item.idle.pending = false
 		p.stats.idleCancellations.Add(1)
@@ -255,13 +206,10 @@ func (p *Provider) applyDeferredIdleSmall(candidate idleCandidate) {
 	}
 	meta.idle.pending = false
 	meta.idle.reclaimable = true
-	// A re-initialized slab keeps its page, so the queued startPage still
-	// describes the live slab; its length comes from the current class.
 	p.markIdle(p.smallSlab(candidate.startPage, p.layouts[meta.classID]))
 }
 
-// clearIdleQueue drops every queued deferral. The caller must hold the exclusive
-// lifecycle lock.
+// clearIdleQueue drops queued deferrals.
 func (p *Provider) clearIdleQueue() {
 	p.idleMu.Lock()
 	clear(p.idleQueue)
