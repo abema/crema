@@ -28,7 +28,7 @@ func ExampleCache() {
 
 func ExampleWithLoadErrorCacheProvider() {
 	provider := &testMemoryProvider[int]{items: make(map[string]CacheObject[int])}
-	negativeProvider := &testNegativeProvider{entries: make(map[string]error)}
+	negativeProvider := &testLoadErrorProvider{entries: make(map[string]error)}
 	cache := NewCache(
 		provider,
 		NoopCacheStorageCodec[int]{},
