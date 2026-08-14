@@ -11,7 +11,7 @@ require (
 	github.com/abema/crema/ext/valkey-go v1.2.0
 	github.com/redis/rueidis v1.0.76
 	github.com/valkey-io/valkey-go v1.0.76
-	google.golang.org/protobuf v1.36.11
+	google.golang.org/protobuf v1.36.12
 )
 
 replace github.com/abema/crema/ext/madvfree => ../ext/madvfree
