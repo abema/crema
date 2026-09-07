@@ -9,7 +9,7 @@ require (
 	github.com/abema/crema/ext/ristretto v1.2.0
 	github.com/abema/crema/ext/rueidis v1.2.0
 	github.com/abema/crema/ext/valkey-go v1.2.0
-	github.com/redis/rueidis v1.0.76
+	github.com/redis/rueidis v1.0.77
 	github.com/valkey-io/valkey-go v1.0.77
 	google.golang.org/protobuf v1.36.12
 )
