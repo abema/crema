@@ -1,6 +1,6 @@
 module github.com/abema/crema/ext/go-json
 
-go 1.25.0
+go 1.26.0
 
 require github.com/abema/crema v1.2.0
 

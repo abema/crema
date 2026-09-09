@@ -1,6 +1,6 @@
 module github.com/abema/crema/ext/rueidis
 
-go 1.25.0
+go 1.26.0
 
 require (
 	github.com/abema/crema v1.2.0
@@ -10,5 +10,5 @@ require (
 
 require (
 	github.com/yuin/gopher-lua v1.1.1 // indirect
-	golang.org/x/sys v0.47.0 // indirect
+	golang.org/x/sys v0.48.0 // indirect
 )
