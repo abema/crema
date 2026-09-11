@@ -10,7 +10,9 @@ permissions:
 
 jobs:
   approve-allowlist:
-    if: ${{ github.actor == 'dependabot[bot]' }}
+    if: >-
+      github.event.pull_request.user.login == 'dependabot[bot]' &&
+      github.repository == 'abema/crema'
     runs-on: ubuntu-latest
     steps:
       - name: Fetch Dependabot metadata
