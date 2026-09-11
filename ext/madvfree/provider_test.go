@@ -8,6 +8,7 @@ import (
 	"errors"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"golang.org/x/sys/unix"
@@ -334,21 +335,22 @@ func countIndexedWithTTL(provider *Provider) int {
 }
 
 func TestProviderBackgroundExpirationReleasesCapacity(t *testing.T) {
-	provider := newTestProvider(t, 1)
-	if err := provider.Set(context.Background(), "expired", []byte("value"), time.Millisecond); err != nil {
-		t.Fatal(err)
-	}
+	synctest.Test(t, func(t *testing.T) {
+		provider := newTestProvider(t, 1)
+		if err := provider.Set(context.Background(), "expired", []byte("value"), time.Millisecond); err != nil {
+			t.Fatal(err)
+		}
 
-	deadline := time.Now().Add(time.Second)
-	for provider.Stats().Entries != 0 && time.Now().Before(deadline) {
 		time.Sleep(time.Millisecond)
-	}
-	if got := provider.Stats().Entries; got != 0 {
-		t.Fatalf("entries after expiration = %d, want 0", got)
-	}
-	if err := provider.Set(context.Background(), "replacement", []byte("value"), 0); err != nil {
-		t.Fatalf("Set() after expiration: %v", err)
-	}
+		// Entries reaches zero before the worker returns capacity to the allocator.
+		synctest.Wait()
+		if got := provider.Stats().Entries; got != 0 {
+			t.Fatalf("entries after expiration = %d, want 0", got)
+		}
+		if err := provider.Set(context.Background(), "replacement", []byte("value"), 0); err != nil {
+			t.Fatalf("Set() after expiration: %v", err)
+		}
+	})
 }
 
 func TestProviderDetectsReclaimedMiddlePage(t *testing.T) {
