@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"golang.org/x/sys/unix"
@@ -262,26 +263,27 @@ func TestSmallSlabPrecheckDoesNotTouchReclaimedPage(t *testing.T) {
 }
 
 func TestRuntimeMadviseFailuresAreSoftForSmallAndTTL(t *testing.T) {
-	provider := newTestProvider(t, 4)
-	provider.backend.(injectableBackend).injectMadvise(func([]byte, int) error {
-		return unix.EIO
+	synctest.Test(t, func(t *testing.T) {
+		provider := newTestProvider(t, 4)
+		provider.backend.(injectableBackend).injectMadvise(func([]byte, int) error {
+			return unix.EIO
+		})
+
+		if err := provider.Set(context.Background(), "key", []byte("value"), time.Nanosecond); err != nil {
+			t.Fatalf("Set(): %v", err)
+		}
+		// Advance time only after Set has released the entry and attempted MADV_FREE.
+		time.Sleep(time.Nanosecond)
+		synctest.Wait()
+
+		stats := provider.Stats()
+		if stats.Entries != 0 || stats.ReservedBytes != 0 {
+			t.Fatalf("TTL cleanup after failed madvise = %+v", stats)
+		}
+		if stats.IdleErrors == 0 || stats.DiscardErrors == 0 {
+			t.Fatalf("madvise error counters = %+v", stats)
+		}
 	})
-
-	if err := provider.Set(context.Background(), "key", []byte("value"), time.Nanosecond); err != nil {
-		t.Fatalf("Set(): %v", err)
-	}
-	deadline := time.Now().Add(time.Second)
-	for provider.Stats().Entries != 0 && time.Now().Before(deadline) {
-		time.Sleep(time.Millisecond)
-	}
-
-	stats := provider.Stats()
-	if stats.Entries != 0 || stats.ReservedBytes != 0 {
-		t.Fatalf("TTL cleanup after failed madvise = %+v", stats)
-	}
-	if stats.IdleErrors == 0 || stats.DiscardErrors == 0 {
-		t.Fatalf("madvise error counters = %+v", stats)
-	}
 }
 
 func TestCloseIgnoresMadviseFailure(t *testing.T) {
