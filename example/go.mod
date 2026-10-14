@@ -14,8 +14,6 @@ require (
 	google.golang.org/protobuf v1.36.12
 )
 
-require github.com/alicebob/miniredis/v2 v2.39.0 // indirect
-
 replace github.com/abema/crema/ext/madvfree => ../ext/madvfree
 
 require (
