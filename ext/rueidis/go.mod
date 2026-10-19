@@ -5,7 +5,7 @@ go 1.26.0
 require (
 	github.com/abema/crema v1.2.0
 	github.com/alicebob/miniredis/v2 v2.40.0
-	github.com/redis/rueidis v1.0.78
+	github.com/redis/rueidis v1.0.79
 )
 
 require (

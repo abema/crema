@@ -9,10 +9,12 @@ require (
 	github.com/abema/crema/ext/ristretto v1.2.0
 	github.com/abema/crema/ext/rueidis v1.2.0
 	github.com/abema/crema/ext/valkey-go v1.2.0
-	github.com/redis/rueidis v1.0.78
+	github.com/redis/rueidis v1.0.79
 	github.com/valkey-io/valkey-go v1.0.78
 	google.golang.org/protobuf v1.36.12
 )
+
+require github.com/alicebob/miniredis/v2 v2.40.0 // indirect
 
 replace github.com/abema/crema/ext/madvfree => ../ext/madvfree
 
