@@ -19,6 +19,7 @@ env:
 
 jobs:
   go-test-madvfree-macos:
+    cache-mode: read
     runs-on: macos-latest
     strategy:
       fail-fast: false

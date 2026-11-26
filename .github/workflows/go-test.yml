@@ -15,6 +15,7 @@ env:
 
 jobs:
   go-test:
+    cache-mode: read
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -55,3 +56,75 @@ jobs:
     steps:
       - name: Check matrix result
         run: test "${{ needs.go-test.result }}" = "success"
+
+  go-test_default:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.ref_protected
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    cache-mode: write
+    strategy:
+      fail-fast: false
+      matrix:
+        go-version: ["1.26", "1.27"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version: ${{ matrix.go-version }}
+          cache: false
+      - id: go-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: v1-${{ runner.os }}-go-test-${{ matrix.go-version }}-${{ hashFiles('go.work.sum', '**/go.sum') }}
+          restore-keys: |
+            v1-${{ runner.os }}-go-test-${{ matrix.go-version }}-
+      - if: steps.go-cache.outputs.cache-hit != 'true'
+        env:
+          GIT_CONFIG_COUNT: "1"
+          GIT_CONFIG_KEY_0: url.https://github-actions:${{ github.token }}@github.com/abema/crema.insteadOf
+          GIT_CONFIG_VALUE_0: https://github.com/abema/crema
+        run: go test -exec /usr/bin/true -race ./... $(find ./ext/ -type d -mindepth 1 -maxdepth 1 | sed 's|$|/...|' | paste -sd ' ' -) ./ext/madvfree/bench/...
+
+  go-test-madvfree-macos_default:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.ref_protected
+    runs-on: macos-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    cache-mode: write
+    strategy:
+      fail-fast: false
+      matrix:
+        go-version: ["1.26", "1.27"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version: ${{ matrix.go-version }}
+          cache: false
+      - id: go-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: v1-${{ runner.os }}-go-test-madvfree-${{ matrix.go-version }}-${{ hashFiles('go.work.sum', '**/go.sum') }}
+          restore-keys: |
+            v1-${{ runner.os }}-go-test-madvfree-${{ matrix.go-version }}-
+      - if: steps.go-cache.outputs.cache-hit != 'true'
+        env:
+          GIT_CONFIG_COUNT: "1"
+          GIT_CONFIG_KEY_0: url.https://github-actions:${{ github.token }}@github.com/abema/crema.insteadOf
+          GIT_CONFIG_VALUE_0: https://github.com/abema/crema
+        run: go test -exec /usr/bin/true -race ./ext/madvfree/... ./ext/madvfree/bench/...
